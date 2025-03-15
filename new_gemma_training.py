@@ -21,6 +21,16 @@ from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig, Tra
 from peft import LoraConfig, get_peft_model, PeftModel
 from trl import GRPOConfig, GRPOTrainer
 
+# Import reward functions from new module
+from rewards import (
+    xmlcount_reward_func,
+    soft_format_reward_func,
+    strict_format_reward_func,
+    int_reward_func,
+    correctness_reward_func,
+    anti_repetition_reward_func
+)
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -35,13 +45,7 @@ logger = logging.getLogger(__name__)
 # Import dataset functions from separate module
 from reasoning_dataset import (
     get_gsm8k_questions, 
-    process_chat_data,
-    xmlcount_reward_func,
-    soft_format_reward_func,
-    strict_format_reward_func,
-    int_reward_func,
-    correctness_reward_func,
-    anti_repetition_reward_func
+    process_chat_data
 )
 
 # Set your Hugging Face token
@@ -74,7 +78,7 @@ print("Loading base model...")
 model = Gemma3ForCausalLM.from_pretrained(
     pretrained_model_name_or_path="google/gemma-3-1b-it",
     device_map=device if device.type != "mps" else "auto",  # handle MPS differently
-    attn_implementation="eager",  # Use eager implementation for better compatibility
+    attn_implementation="eager",  # Use eager implementation during training for better compatibility
     torch_dtype=torch_dtype
 )
 
