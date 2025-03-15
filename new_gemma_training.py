@@ -243,23 +243,40 @@ for key, value in trainer_output.metrics.items():
 
 # Track final memory usage on MPS
 if is_mps_available:
-    peak_memory = torch.mps.max_memory_allocated() / (1024 * 1024)
-    final_memory = torch.mps.current_allocated_memory() / (1024 * 1024)
-    print(f"Peak MPS memory usage: {peak_memory:.2f} MB")
-    print(f"Final MPS memory usage: {final_memory:.2f} MB")
+    try:
+        final_memory = torch.mps.current_allocated_memory() / (1024 * 1024)
+        print(f"Final MPS memory usage: {final_memory:.2f} MB")
+    except Exception as e:
+        print("Unable to track MPS memory usage")
 
 # Test the trained model
 # --------------------------------------------------------------------------
 print("Testing the trained model...")
-from transformers import pipeline
+
+# Create a test pipeline that works with PEFT models
+def generate_text(model, tokenizer, prompt, max_new_tokens=1024):
+    # Prepare the prompt
+    input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False)
+    inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
+    
+    # Generate
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9
+        )
+    
+    # Decode and return
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 question = "The school principal decided that she wanted every class to have an equal number of boys and girls in each first-grade classroom. There are 4 classrooms. There are 56 boys and 44 girls. How many total students are in each classroom?"
 
-generator = pipeline("text-generation", model=trainer.model, tokenizer=processor)
-input_text = processor.apply_chat_template([{"role": "user", "content": question}])
-output = generator(input_text, max_new_tokens=1024)
+output = generate_text(trainer.model, processor, question)
 
 print("\nTest output:")
-print(output[0]['generated_text'])
+print(output)
 
 print("\nTraining complete!")

@@ -319,17 +319,46 @@ def extract_sections(text: str) -> tuple[str, str, str]:
         
     return reasoning, answer, post_answer
 
+def is_same_script_majority(text1: str, text2: str) -> bool:
+    """Check if two texts share the same majority script."""
+    def get_majority_script(text):
+        script_counts = {}
+        for char in text:
+            if char.isspace():
+                continue
+            script = detect_script(char)
+            if script != "Unknown":
+                script_counts[script] = script_counts.get(script, 0) + 1
+        return max(script_counts.items(), key=lambda x: x[1])[0] if script_counts else "Unknown"
+    
+    return get_majority_script(text1) == get_majority_script(text2)
+
 def compute_text_similarity(text1: str, text2: str) -> float:
-    """Compute semantic similarity between two texts using TF-IDF and cosine similarity."""
+    """Compute semantic similarity between two texts, with special handling for multilingual content."""
     if not text1 or not text2:
         return 0.0
-        
-    vectorizer = TfidfVectorizer(stop_words='english')
+    
+    # If texts are primarily in different scripts, consider them potentially related
+    if not is_same_script_majority(text1, text2):
+        return TOPIC_SETTINGS["different_script_base_similarity"]
+    
+    # For same-script content, use TF-IDF but without English-specific processing
+    vectorizer = TfidfVectorizer(stop_words=None)
     try:
-        tfidf_matrix = vectorizer.fit_transform([text1, text2])
-        return cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        # Normalize texts to handle different scripts
+        text1_norm = ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text1)
+        text2_norm = ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text2)
+        
+        tfidf_matrix = vectorizer.fit_transform([text1_norm, text2_norm])
+        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        
+        # Boost similarity for texts with shared scripts
+        if similarity > 0:
+            similarity = min(1.0, similarity * TOPIC_SETTINGS["same_script_boost"])
+            
+        return similarity
     except:
-        return 0.0
+        return TOPIC_SETTINGS["different_script_base_similarity"]
 
 def topic_relevance_reward_func(prompts, completions, **kwargs) -> list[float]:
     """Rewards responses that stay on topic and penalizes off-topic content, excessive length,

@@ -11,3 +11,4 @@ training_process.log
 gemma3_1b_peft_adapters/
 gemma3_1b_thinking_mac/
 gemma3_1b_thinking_mac_final/
+inference_output.txt

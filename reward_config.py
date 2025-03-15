@@ -78,6 +78,9 @@ TOPIC_SETTINGS = {
     "max_reasoning_length": 500,  # Maximum reasonable length for reasoning section
     "max_answer_length": 100,    # Maximum reasonable length for answer section
     "min_similarity_threshold": 0.3,  # Minimum semantic similarity to consider text on-topic
+    # New settings for multilingual content
+    "different_script_base_similarity": 0.4,  # Base similarity score for content in different scripts
+    "same_script_boost": 1.2,    # Boost factor for similarity within same script
 }
 
 # Topic relevance penalties
