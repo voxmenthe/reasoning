@@ -28,7 +28,8 @@ from rewards import (
     strict_format_reward_func,
     int_reward_func,
     correctness_reward_func,
-    anti_repetition_reward_func
+    anti_repetition_reward_func,
+    topic_relevance_reward_func
 )
 
 # Set up logging
@@ -210,7 +211,8 @@ trainer = GRPOTrainer(
         strict_format_reward_func,
         int_reward_func,
         correctness_reward_func,
-        anti_repetition_reward_func,  # Add our new reward function to penalize repetitive patterns
+        anti_repetition_reward_func,
+        topic_relevance_reward_func,  # Add the new reward function
     ],
     args=training_args,
     train_dataset=dataset,
