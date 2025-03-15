@@ -21,16 +21,8 @@ from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig, Tra
 from peft import LoraConfig, get_peft_model, PeftModel
 from trl import GRPOConfig, GRPOTrainer
 
-# Import reward functions from new module
-from rewards import (
-    xmlcount_reward_func,
-    soft_format_reward_func,
-    strict_format_reward_func,
-    int_reward_func,
-    correctness_reward_func,
-    anti_repetition_reward_func,
-    topic_relevance_reward_func
-)
+# Import reward functions configuration
+from reward_config import REWARD_FUNCTIONS
 
 # Set up logging
 logging.basicConfig(
@@ -74,10 +66,13 @@ torch_dtype = torch.bfloat16
 
 # Model and tokenizer initialization
 # --------------------------------------------------------------------------
+
+MODEL_NAME = "google/gemma-3-4b-it" # "google/gemma-3-1b-it",
+
 # Load base model
 print("Loading base model...")
 model = Gemma3ForCausalLM.from_pretrained(
-    pretrained_model_name_or_path="google/gemma-3-1b-it",
+    pretrained_model_name_or_path=MODEL_NAME,
     device_map=device if device.type != "mps" else "auto",  # handle MPS differently
     attn_implementation="eager",  # Use eager implementation during training for better compatibility
     torch_dtype=torch_dtype
@@ -89,11 +84,11 @@ model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentran
 
 # Load and configure tokenizer
 print("Loading tokenizer...")
-processor = AutoTokenizer.from_pretrained("google/gemma-3-1b-it", add_bos=True)
+processor = AutoTokenizer.from_pretrained(MODEL_NAME, add_bos=True)
 processor.padding_side = 'right'
 
 # Add chat template from the instruction-tuned model (improvement from Fine_Tuning script)
-processor.chat_template = AutoTokenizer.from_pretrained("google/gemma-3-4b-it", add_bos=True).chat_template
+processor.chat_template = AutoTokenizer.from_pretrained(MODEL_NAME, add_bos=True).chat_template
 
 # Configure LoRA - improved settings from Fine_Tuning script
 print("Configuring LoRA adapters...")
@@ -119,8 +114,8 @@ print(model.print_trainable_parameters())
 # --------------------------------------------------------------------------
 print("Loading GSM8K dataset...")
 dataset = get_gsm8k_questions()
-print(f"Dataset size: {len(dataset)} examples")
-print(f"Sample example: {dataset[0]}")
+dataset_size = len(dataset)
+print(f"Dataset size: {dataset_size} examples")
 
 # Training configuration
 # --------------------------------------------------------------------------
@@ -133,11 +128,23 @@ else:
     per_device_batch = 4  # Original value
     grad_accum = 4  # Original value
 
+# Define training parameters
+num_epochs = 3  # Define number of epochs upfront
+effective_batch_size = per_device_batch * grad_accum
+steps_per_epoch = dataset_size // effective_batch_size
+total_steps = steps_per_epoch * num_epochs
+
+print(f"\nTraining configuration:")
+print(f"- Number of epochs: {num_epochs}")
+print(f"- Effective batch size: {effective_batch_size}")
+print(f"- Steps per epoch: {steps_per_epoch}")
+print(f"- Total steps: {total_steps}")
+
 # Configure sequence lengths
 max_prompt_length = 1024
 max_seq_length = 2048
 
-# Create training arguments with MPS-compatible optimizer
+# Configure training arguments with MPS-compatible optimizer
 print("Configuring training arguments...")
 training_args = GRPOConfig(
     learning_rate=5e-6,
@@ -156,22 +163,24 @@ training_args = GRPOConfig(
     num_generations=2,  # This needs to evenly divide into the batch size
     max_prompt_length=max_prompt_length,
     max_completion_length=max_seq_length - max_prompt_length,
-    num_train_epochs=1,
-    max_steps=5,
+    num_train_epochs=num_epochs,
+    max_steps=total_steps,
     save_steps=250,
     max_grad_norm=0.1,
     report_to="none",
     cache_implementation="hybrid",
     
     # Output directory
-    output_dir="./gemma3_1b_thinking_mac"
+    output_dir=f"./gemma3_{MODEL_NAME}_thinking_mac"
 )
+
+print(f"- Total steps for {training_args.num_train_epochs} epochs: {training_args.max_steps}")
 
 # Initialize and start training
 # --------------------------------------------------------------------------
 print("Initializing GRPO trainer...")
 logger.info("Initializing GRPO trainer with the following configuration:")
-logger.info(f"Model: google/gemma-3-1b-it")
+logger.info(f"Model: {MODEL_NAME}")
 logger.info(f"Learning rate: {training_args.learning_rate}")
 logger.info(f"Batch size: {training_args.per_device_train_batch_size}")
 logger.info(f"Gradient accumulation steps: {training_args.gradient_accumulation_steps}")
@@ -205,15 +214,7 @@ class OutputLoggingCallback(TrainerCallback):
 trainer = GRPOTrainer(
     model=model,
     processing_class=processor,
-    reward_funcs=[
-        xmlcount_reward_func,
-        soft_format_reward_func,
-        strict_format_reward_func,
-        int_reward_func,
-        correctness_reward_func,
-        anti_repetition_reward_func,
-        topic_relevance_reward_func,  # Add the new reward function
-    ],
+    reward_funcs=REWARD_FUNCTIONS,  # Use reward functions from config
     args=training_args,
     train_dataset=dataset,
     callbacks=[OutputLoggingCallback()]
@@ -226,8 +227,8 @@ logger.info(f"Training completed in {trainer_output.metrics['train_runtime']:.2f
 
 # Save the model - both full model and PEFT adapters
 # --------------------------------------------------------------------------
-output_dir = "./gemma3_1b_thinking_mac_final"
-adapter_output_dir = "./gemma3_1b_peft_adapters"
+output_dir = f"./gemma3_{MODEL_NAME}_thinking_mac_final"
+adapter_output_dir = f"./gemma3_{MODEL_NAME}_peft_adapters"
 
 logger.info(f"Saving full model to {output_dir}")
 trainer.save_model(output_dir)

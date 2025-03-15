@@ -29,9 +29,9 @@ Negative rewards (penalties) can reduce the total significantly:
 """
 
 # Core reward weights
-CORRECTNESS_REWARD = 2.0  # Primary objective - correct answer
+CORRECTNESS_REWARD = 2.5  # Primary objective - correct answer
 INTEGER_REWARD = 0.5      # Reward for providing numeric answer
-STRICT_FORMAT_REWARD = 0.5  # Perfect formatting with newlines
+STRICT_FORMAT_REWARD = 0.6  # Perfect formatting with newlines
 SOFT_FORMAT_REWARD = 0.5    # Basic XML structure present
 XML_COUNT_REWARD = 0.125    # Per-tag reward, max 0.5 total
 
@@ -93,3 +93,24 @@ TOPIC_PENALTIES = {
 
 # Content after closing tag penalty
 TRAILING_CONTENT_PENALTY = 0.001  # Per character after final tag 
+
+# Reward function configuration
+from rewards import (
+    xmlcount_reward_func,
+    soft_format_reward_func,
+    strict_format_reward_func,
+    int_reward_func,
+    correctness_reward_func,
+    anti_repetition_reward_func,
+    topic_relevance_reward_func
+)
+
+REWARD_FUNCTIONS = [
+    xmlcount_reward_func,
+    soft_format_reward_func,
+    strict_format_reward_func,
+    int_reward_func,
+    correctness_reward_func,
+    anti_repetition_reward_func,
+    topic_relevance_reward_func,
+] 
