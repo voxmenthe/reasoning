@@ -71,28 +71,21 @@ MODEL_NAME = "google/gemma-3-4b-it" # "google/gemma-3-1b-it",
 
 # Load base model
 print("Loading base model...")
+# First load the model on CPU without any dtype or device specification
+model = Gemma3ForCausalLM.from_pretrained(
+    pretrained_model_name_or_path=MODEL_NAME,
+    attn_implementation="eager"  # Explicitly set eager attention during loading
+)
+
+# Then set dtype and move to appropriate device
+print(f"Converting model to {torch_dtype} and moving to device...")
 if is_mps_available:
-    print("Creating empty model for MPS...")
-    # First get the configuration
-    config = Gemma3ForCausalLM.from_pretrained(MODEL_NAME).config
-    # Create empty model with config
-    model = Gemma3ForCausalLM(config).to_empty(device='mps', dtype=torch_dtype)
-    # Now load the weights
-    model.load_state_dict(
-        Gemma3ForCausalLM.from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
-            state_dict=True
-        )
-    )
+    # First convert to appropriate dtype while still on CPU
+    model = model.to(torch_dtype)
+    # Then move to MPS device
+    model = model.to("mps")
 else:
-    model = Gemma3ForCausalLM.from_pretrained(
-        pretrained_model_name_or_path=MODEL_NAME,
-        torch_dtype=torch_dtype,
-        device_map="auto",
-        attn_implementation="eager"
-    )
+    model = model.to(device=device, dtype=torch_dtype)
 
 # Enable gradient checkpointing for memory efficiency
 print("Enabling gradient checkpointing...")
@@ -170,8 +163,8 @@ training_args = GRPOConfig(
     warmup_ratio=0.1,
     lr_scheduler_type="linear",
     
-    # Use adamw_torch instead of adamw_8bit for MPS compatibility
-    optim="adamw_torch",  # Changed from "adamw_8bit" to work on MPS
+    # Use adamw_torch which is MPS-compatible (not 8bit version)
+    optim="adamw_torch",
     
     logging_steps=1,
     per_device_train_batch_size=per_device_batch,
@@ -186,9 +179,16 @@ training_args = GRPOConfig(
     report_to="none",
     cache_implementation="hybrid",
     
+    # Ensure correct gradient computation
+    gradient_checkpointing=True,  # Enable gradient checkpointing in trainer arguments
+    
     # Output directory
     output_dir=f"./gemma3_{MODEL_NAME}_thinking_mac"
 )
+
+# Make sure we're not using the cache during training to ensure gradient flow
+# (Set this on the model instead of in config)
+model.config.use_cache = False
 
 print(f"- Total steps for {training_args.num_train_epochs} epochs: {training_args.max_steps}")
 
