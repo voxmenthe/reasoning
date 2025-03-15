@@ -1,0 +1,10 @@
+pip
+git+https://github.com/huggingface/trl.git@main
+bitsandbytes
+git+https://github.com/huggingface/transformers@v4.49.0-Gemma-3
+git+https://github.com/huggingface/peft.git
+ipykernel
+ipywidgets
+jupyter
+nbconvert
+regex
