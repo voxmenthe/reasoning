@@ -71,12 +71,28 @@ MODEL_NAME = "google/gemma-3-4b-it" # "google/gemma-3-1b-it",
 
 # Load base model
 print("Loading base model...")
-model = Gemma3ForCausalLM.from_pretrained(
-    pretrained_model_name_or_path=MODEL_NAME,
-    device_map=device if device.type != "mps" else "auto",  # handle MPS differently
-    attn_implementation="eager",  # Use eager implementation during training for better compatibility
-    torch_dtype=torch_dtype
-)
+if is_mps_available:
+    print("Creating empty model for MPS...")
+    # First get the configuration
+    config = Gemma3ForCausalLM.from_pretrained(MODEL_NAME).config
+    # Create empty model with config
+    model = Gemma3ForCausalLM(config).to_empty(device='mps', dtype=torch_dtype)
+    # Now load the weights
+    model.load_state_dict(
+        Gemma3ForCausalLM.from_pretrained(
+            MODEL_NAME,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
+            state_dict=True
+        )
+    )
+else:
+    model = Gemma3ForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=MODEL_NAME,
+        torch_dtype=torch_dtype,
+        device_map="auto",
+        attn_implementation="eager"
+    )
 
 # Enable gradient checkpointing for memory efficiency
 print("Enabling gradient checkpointing...")
