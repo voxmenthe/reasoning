@@ -17,7 +17,7 @@ import os
 import torch
 import warnings
 import logging
-from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig
+from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig, TrainerCallback
 from peft import LoraConfig, get_peft_model, PeftModel
 from trl import GRPOConfig, GRPOTrainer
 
@@ -121,9 +121,9 @@ print(f"Sample example: {dataset[0]}")
 # --------------------------------------------------------------------------
 # Set dynamic batch size based on device
 if is_mps_available:
-    per_device_batch = 1  # Conservative for MPS
-    grad_accum = 8  # Higher for MPS to compensate
-    print("Using reduced batch size for MPS device")
+    per_device_batch = 2  # Increased from 1 to 2 to be divisible by num_generations
+    grad_accum = 4  # Reduced from 8 since we increased batch size
+    print("Using MPS-optimized batch size")
 else:
     per_device_batch = 4  # Original value
     grad_accum = 4  # Original value
@@ -140,7 +140,7 @@ training_args = GRPOConfig(
     adam_beta2=0.99,
     weight_decay=0.1,
     warmup_ratio=0.1,
-    lr_scheduler_type="linear",  # Changed from "constant" to "linear" (from Fine_Tuning script)
+    lr_scheduler_type="linear",
     
     # Use adamw_torch instead of adamw_8bit for MPS compatibility
     optim="adamw_torch",  # Changed from "adamw_8bit" to work on MPS
@@ -148,7 +148,7 @@ training_args = GRPOConfig(
     logging_steps=1,
     per_device_train_batch_size=per_device_batch,
     gradient_accumulation_steps=grad_accum,
-    num_generations=2,
+    num_generations=2,  # This needs to evenly divide into the batch size
     max_prompt_length=max_prompt_length,
     max_completion_length=max_seq_length - max_prompt_length,
     num_train_epochs=1,
@@ -174,9 +174,13 @@ logger.info(f"Number of epochs: {training_args.num_train_epochs}")
 logger.info(f"Max steps: {training_args.max_steps}")
 
 # Custom callback to log model outputs during training
-class OutputLoggingCallback:
+class OutputLoggingCallback(TrainerCallback):
     def __init__(self):
         self.log_counter = 0
+    
+    def on_init_end(self, args, state, control, **kwargs):
+        logger.info("Training initialization completed")
+        return control
         
     def on_step_end(self, args, state, control, logs=None, **kwargs):
         self.log_counter += 1
@@ -187,6 +191,10 @@ class OutputLoggingCallback:
                 logger.info(f"Step {state.global_step}: Anti-repetition reward: {logs['rewards/anti_repetition_reward_func']}")
             logger.info(f"Step {state.global_step}: Total reward: {logs.get('reward', 'N/A')}")
         
+        return control
+
+    def on_train_end(self, args, state, control, **kwargs):
+        logger.info("Training completed")
         return control
 
 trainer = GRPOTrainer(

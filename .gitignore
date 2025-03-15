@@ -7,3 +7,4 @@ __pycache__/
 .DS_Store
 trainer_output
 creds.py
+training_process.log
