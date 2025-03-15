@@ -1,5 +1,14 @@
 import re
 from typing import List
+from reward_config import (
+    CORRECTNESS_REWARD,
+    INTEGER_REWARD,
+    STRICT_FORMAT_REWARD,
+    SOFT_FORMAT_REWARD,
+    XML_TAG_WEIGHTS,
+    REPETITION_PENALTIES,
+    TRAILING_CONTENT_PENALTY
+)
 
 def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
     """Rewards the model when its answer matches the correct answer"""
@@ -7,41 +16,41 @@ def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[floa
     q = prompts[0][-1]['content']
     extracted_responses = [extract_xml_answer(r) for r in responses]
     print('-'*20, f"Question:\n{q}", f"\nAnswer:\n{answer[0]}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
-    return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
+    return [CORRECTNESS_REWARD if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
 
 def int_reward_func(completions, **kwargs) -> list[float]:
     """Rewards the model for providing a numeric answer"""
     responses = [completion[0]['content'] for completion in completions]
     extracted_responses = [extract_xml_answer(r) for r in responses]
-    return [0.5 if r.isdigit() else 0.0 for r in extracted_responses]
+    return [INTEGER_REWARD if r.isdigit() else 0.0 for r in extracted_responses]
 
 def strict_format_reward_func(completions, **kwargs) -> list[float]:
     """Reward function that checks if the completion has a specific format with exact newlines."""
     pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
     responses = [completion[0]["content"] for completion in completions]
     matches = [re.match(pattern, r, re.DOTALL) for r in responses]
-    return [0.5 if match else 0.0 for match in matches]
+    return [STRICT_FORMAT_REWARD if match else 0.0 for match in matches]
 
 def soft_format_reward_func(completions, **kwargs) -> list[float]:
     """Reward function that checks if the completion has XML tags in any format."""
     pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
     responses = [completion[0]["content"] for completion in completions]
     matches = [re.search(pattern, r, re.DOTALL) for r in responses]
-    return [0.5 if match else 0.0 for match in matches]
+    return [SOFT_FORMAT_REWARD if match else 0.0 for match in matches]
 
 def count_xml(text) -> float:
     """Counts XML tags and penalizes content after closing tags"""
     count = 0.0
     if text.count("<reasoning>\n") == 1:
-        count += 0.125
+        count += XML_TAG_WEIGHTS["reasoning_open"]
     if text.count("\n</reasoning>\n") == 1:
-        count += 0.125
+        count += XML_TAG_WEIGHTS["reasoning_close"]
     if text.count("\n<answer>\n") == 1:
-        count += 0.125
-        count -= len(text.split("\n</answer>\n")[-1])*0.001
+        count += XML_TAG_WEIGHTS["answer_open"]
+        count -= len(text.split("\n</answer>\n")[-1]) * TRAILING_CONTENT_PENALTY
     if text.count("\n</answer>") == 1:
-        count += 0.125
-        count -= (len(text.split("\n</answer>")[-1]) - 1)*0.001
+        count += XML_TAG_WEIGHTS["answer_close"]
+        count -= (len(text.split("\n</answer>")[-1]) - 1) * TRAILING_CONTENT_PENALTY
     return count
 
 def xmlcount_reward_func(completions, **kwargs) -> list[float]:
@@ -72,7 +81,7 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
             import regex
             consecutive_matches = regex.findall(consecutive_repeats, text, regex.UNICODE)
             if consecutive_matches:
-                reward -= sum(len(match) for match in consecutive_matches) * 0.05
+                reward -= sum(len(match) for match in consecutive_matches) * REPETITION_PENALTIES["consecutive_script"]
         except ImportError:
             # Fallback if regex module not available
             pass
@@ -80,12 +89,12 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
         # Check for repeating patterns (strongest penalty)
         repetition_matches = re.findall(repeating_pattern, text)
         if repetition_matches:
-            reward -= sum(len(pattern) for pattern in repetition_matches) * 0.1
+            reward -= sum(len(pattern) for pattern in repetition_matches) * REPETITION_PENALTIES["pattern"]
         
         # Check for repetitive punctuation
         punct_matches = re.findall(repeating_punctuation, text)
         if punct_matches:
-            reward -= sum(len(match) for match in punct_matches) * 0.03
+            reward -= sum(len(match) for match in punct_matches) * REPETITION_PENALTIES["punctuation"]
         
         rewards.append(reward)
     
