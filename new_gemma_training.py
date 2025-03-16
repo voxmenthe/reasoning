@@ -27,15 +27,15 @@ class ForwardWrapper:
         self.model = model
         
     def __call__(self, *args, **kwargs):
-        # Ensure inputs have requires_grad=True
+        # Ensure inputs have requires_grad=True only for floating point tensors
         for k, v in kwargs.items():
-            if isinstance(v, torch.Tensor) and not v.requires_grad:
+            if isinstance(v, torch.Tensor) and v.dtype.is_floating_point and not v.requires_grad:
                 kwargs[k] = v.detach().clone().requires_grad_(True)
                 
         # For positional args
         new_args = []
         for arg in args:
-            if isinstance(arg, torch.Tensor) and not arg.requires_grad:
+            if isinstance(arg, torch.Tensor) and arg.dtype.is_floating_point and not arg.requires_grad:
                 new_args.append(arg.detach().clone().requires_grad_(True))
             else:
                 new_args.append(arg)
@@ -251,15 +251,29 @@ class OutputLoggingCallback(TrainerCallback):
         self.log_counter += 1
         if self.log_counter % 5 == 0 and logs:  # Log every 5 steps
             if 'loss' in logs:
-                logger.info(f"Step {state.global_step}: Loss: {logs['loss']}")
+                logger.info(f"Step {state.global_step}: Loss: {logs['loss']:.10f}")
             if 'rewards/correctness_reward_func' in logs:
-                logger.info(f"Step {state.global_step}: Correctness reward: {logs['rewards/correctness_reward_func']}")
+                logger.info(f"Step {state.global_step}: Correctness reward: {logs['rewards/correctness_reward_func']:.6f}")
             if 'rewards/anti_repetition_reward_func' in logs:
-                logger.info(f"Step {state.global_step}: Anti-repetition reward: {logs['rewards/anti_repetition_reward_func']}")
+                logger.info(f"Step {state.global_step}: Anti-repetition reward: {logs['rewards/anti_repetition_reward_func']:.6f}")
             logger.info(f"Step {state.global_step}: Total reward: {logs.get('reward', 'N/A')}")
             
             # Log all available metrics for debugging
             logger.info(f"Step {state.global_step}: Available metrics: {', '.join(logs.keys())}")
+            
+            # Log trainable parameter gradients to verify they're being updated
+            if self.log_counter % 20 == 0:  # Less frequent check
+                param_with_grad = 0
+                for name, param in trainer.model.named_parameters():
+                    if param.requires_grad and param.grad is not None:
+                        param_with_grad += 1
+                logger.info(f"Step {state.global_step}: Parameters with gradients: {param_with_grad}")
+                
+                # Log sample parameter values to verify updates
+                if param_with_grad > 0:
+                    for name, param in list(trainer.model.named_parameters())[:3]:
+                        if param.requires_grad:
+                            logger.info(f"Parameter {name}: {param.data.flatten()[:3].tolist()}")
         
         return control
 
