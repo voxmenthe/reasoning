@@ -20,6 +20,10 @@ import logging
 from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig, TrainerCallback
 from peft import LoraConfig, get_peft_model, PeftModel
 from trl import GRPOConfig, GRPOTrainer
+import pandas as pd
+import re
+import csv
+from pathlib import Path
 
 # Custom forward wrapper to ensure inputs require gradients
 class ForwardWrapper:
@@ -242,18 +246,93 @@ logger.info(f"Sample trainable parameters: {trainable_params[:5]}")
 class OutputLoggingCallback(TrainerCallback):
     def __init__(self):
         self.log_counter = 0
+        self.total_answers = 0
+        self.correct_answers = 0
+        
+        # Add CSV tracking
+        self.training_data = []
+        self.csv_save_frequency = 50  # Save every 50 steps
+        self.csv_path = "training_outputs.csv"
+        
+        # Ensure CSV directory exists
+        Path(self.csv_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create CSV with headers if it doesn't exist
+        if not os.path.exists(self.csv_path):
+            with open(self.csv_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['question', 'answer', 'llm_reasoning', 'llm_answer'])
     
     def on_init_end(self, args, state, control, **kwargs):
         logger.info("Training initialization completed")
-        print(f"\nTraining progress: 0/{args.max_steps} steps (0.0%)")
+        print(f"\nTraining progress: 0/{args.max_steps} steps (0.0%) | Correct: 0/0 (0.0%)")
         return control
         
-    def on_step_end(self, args, state, control, logs=None, **kwargs):
+    def on_step_end(self, args, state, control, logs=None, model=None, tokenizer=None, **kwargs):
         self.log_counter += 1
         
+        # Update correct answers counter if available in logs
+        if logs and 'rewards/correctness_reward_func' in logs:
+            # Each step processes batch_size * num_generations examples
+            batch_size = args.per_device_train_batch_size
+            num_generations = args.num_generations
+            examples_this_step = batch_size * num_generations
+            
+            self.total_answers += examples_this_step
+            
+            # Check for correctness based on non-zero reward
+            # The reward value indicates how many were correct in this batch
+            from reward_config import CORRECTNESS_REWARD
+            correct_value = logs['rewards/correctness_reward_func']
+            
+            # If the reward is for the whole batch, divide by CORRECTNESS_REWARD to get count
+            if correct_value > 0:
+                correct_count = int(round(correct_value / CORRECTNESS_REWARD))
+                self.correct_answers += correct_count
+        
+        # Get model outputs if available
+        if hasattr(trainer, 'current_batch_info') and trainer.current_batch_info:
+            try:
+                batch_info = trainer.current_batch_info
+                
+                # Extract questions, true answers, model generations
+                questions = batch_info.get('questions', [])
+                true_answers = batch_info.get('true_answers', [])
+                model_outputs = batch_info.get('model_outputs', [])
+                
+                # Process each example in the batch
+                for i in range(len(questions)):
+                    if i < len(questions) and i < len(true_answers) and i < len(model_outputs):
+                        question = questions[i]
+                        true_answer = true_answers[i]
+                        model_output = model_outputs[i]
+                        
+                        # Extract reasoning and answer from model output
+                        llm_reasoning, llm_answer = extract_reasoning_and_answer(model_output)
+                        
+                        # Store data for CSV
+                        self.training_data.append({
+                            'question': question,
+                            'answer': true_answer,
+                            'llm_reasoning': llm_reasoning,
+                            'llm_answer': llm_answer
+                        })
+            except Exception as e:
+                logger.warning(f"Error capturing training data: {str(e)}")
+        
+        # Calculate accuracy percentage
+        accuracy = 0.0
+        if self.total_answers > 0:
+            accuracy = (self.correct_answers / self.total_answers) * 100
+            
         # Print lightweight progress to stdout every step
         progress_pct = (state.global_step / args.max_steps) * 100
-        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps ({progress_pct:.1f}%)", end="", flush=True)
+        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps ({progress_pct:.1f}%) | Correct: {self.correct_answers}/{self.total_answers} ({accuracy:.1f}%)", end="", flush=True)
+        
+        # Save CSV periodically
+        if self.log_counter % self.csv_save_frequency == 0 and self.training_data:
+            self.save_csv()
+            logger.info(f"Training data saved to CSV at step {state.global_step}")
         
         if self.log_counter % 5 == 0 and logs:  # Log every 5 steps
             if 'loss' in logs:
@@ -263,6 +342,7 @@ class OutputLoggingCallback(TrainerCallback):
             if 'rewards/anti_repetition_reward_func' in logs:
                 logger.info(f"Step {state.global_step}: Anti-repetition reward: {logs['rewards/anti_repetition_reward_func']:.6f}")
             logger.info(f"Step {state.global_step}: Total reward: {logs.get('reward', 'N/A')}")
+            logger.info(f"Step {state.global_step}: Accuracy so far: {self.correct_answers}/{self.total_answers} ({accuracy:.2f}%)")
             
             # Log all available metrics for debugging
             logger.info(f"Step {state.global_step}: Available metrics: {', '.join(logs.keys())}")
@@ -285,16 +365,97 @@ class OutputLoggingCallback(TrainerCallback):
 
     def on_train_end(self, args, state, control, **kwargs):
         # Print final progress and add a newline
-        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps (100.0%)")
+        accuracy = 0.0
+        if self.total_answers > 0:
+            accuracy = (self.correct_answers / self.total_answers) * 100
+            
+        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps (100.0%) | Correct: {self.correct_answers}/{self.total_answers} ({accuracy:.1f}%)")
         print("\nTraining completed!")
+        
+        # Save final CSV
+        self.save_csv()
+        logger.info(f"Final training data saved to {self.csv_path}")
+        
+        logger.info(f"Final accuracy: {self.correct_answers}/{self.total_answers} ({accuracy:.2f}%)")
         logger.info("Training completed")
         return control
+    
+    def save_csv(self):
+        """Save training data to CSV file"""
+        if not self.training_data:
+            logger.warning("No training data to save")
+            return
+            
+        try:
+            # Convert to DataFrame
+            df = pd.DataFrame(self.training_data)
+            
+            # If file exists, append without headers
+            if os.path.exists(self.csv_path) and os.path.getsize(self.csv_path) > 0:
+                df.to_csv(self.csv_path, mode='a', header=False, index=False)
+            else:
+                df.to_csv(self.csv_path, index=False)
+                
+            # Clear the stored data after saving
+            self.training_data = []
+            
+        except Exception as e:
+            logger.error(f"Error saving CSV: {str(e)}")
+
+# Function to extract reasoning and answer from model output
+def extract_reasoning_and_answer(text):
+    """
+    Extract reasoning and answer from model output using the XML format tags
+    Returns tuple of (reasoning, answer)
+    """
+    reasoning = ""
+    answer = ""
+    
+    # Extract reasoning
+    reasoning_match = re.search(r'<reasoning>(.*?)</reasoning>', text, re.DOTALL)
+    if reasoning_match:
+        reasoning = reasoning_match.group(1).strip()
+    
+    # Extract answer
+    answer_match = re.search(r'<answer>(.*?)</answer>', text, re.DOTALL)
+    if answer_match:
+        answer = answer_match.group(1).strip()
+    
+    return reasoning, answer
 
 # Apply the forward wrapper to ensure inputs have requires_grad=True
 original_forward = model.forward
 model.forward = ForwardWrapper(model.forward)
 
-trainer = GRPOTrainer(
+# Modify GRPOTrainer to capture current batch information
+class CustomGRPOTrainer(GRPOTrainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.current_batch_info = None
+        
+    def train(self, *args, **kwargs):
+        result = super().train(*args, **kwargs)
+        return result
+    
+    def compute_loss(self, model, inputs, return_outputs=False):
+        # Store current batch information for the callback
+        if hasattr(inputs, 'questions'):
+            self.current_batch_info = {
+                'questions': inputs.questions,
+                'true_answers': inputs.answers if hasattr(inputs, 'answers') else None,
+                'model_outputs': None  # Will be populated after generation
+            }
+            
+        # Call the parent method
+        result = super().compute_loss(model, inputs, return_outputs)
+        
+        # Update with model outputs if available
+        if hasattr(self, 'last_outputs') and self.current_batch_info:
+            self.current_batch_info['model_outputs'] = self.last_outputs
+            
+        return result
+
+trainer = CustomGRPOTrainer(
     model=model,
     processing_class=processor,
     reward_funcs=REWARD_FUNCTIONS,  # Use reward functions from config
