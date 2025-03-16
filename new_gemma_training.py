@@ -245,10 +245,16 @@ class OutputLoggingCallback(TrainerCallback):
     
     def on_init_end(self, args, state, control, **kwargs):
         logger.info("Training initialization completed")
+        print(f"\nTraining progress: 0/{args.max_steps} steps (0.0%)")
         return control
         
     def on_step_end(self, args, state, control, logs=None, **kwargs):
         self.log_counter += 1
+        
+        # Print lightweight progress to stdout every step
+        progress_pct = (state.global_step / args.max_steps) * 100
+        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps ({progress_pct:.1f}%)", end="", flush=True)
+        
         if self.log_counter % 5 == 0 and logs:  # Log every 5 steps
             if 'loss' in logs:
                 logger.info(f"Step {state.global_step}: Loss: {logs['loss']:.10f}")
@@ -278,6 +284,9 @@ class OutputLoggingCallback(TrainerCallback):
         return control
 
     def on_train_end(self, args, state, control, **kwargs):
+        # Print final progress and add a newline
+        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps (100.0%)")
+        print("\nTraining completed!")
         logger.info("Training completed")
         return control
 

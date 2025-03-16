@@ -6,6 +6,10 @@ from nltk.tokenize import word_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import logging
+import os
+import json
+from datetime import datetime
 
 nltk.download('punkt_tab')
 
@@ -23,6 +27,16 @@ from reward_config import (
     ANTI_REPETITION_SCALE,
     MAX_ANTI_REPETITION_PENALTY
 )
+
+# Configure logging for whitelist matches
+WHITELIST_LOG_DIR = os.environ.get('WHITELIST_LOG_DIR', 'logs')
+os.makedirs(WHITELIST_LOG_DIR, exist_ok=True)
+whitelist_logger = logging.getLogger('whitelist_matches')
+whitelist_logger.setLevel(logging.INFO)
+log_file = os.path.join(WHITELIST_LOG_DIR, f'whitelist_matches_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+whitelist_logger.addHandler(file_handler)
 
 # Define mathematical expression whitelist patterns
 MATH_WHITELIST_PATTERNS = [
@@ -240,12 +254,17 @@ def find_mixed_script_sequences(text: str) -> list[tuple[str, int]]:
 
 def is_math_expression(phrase: str) -> bool:
     """Check if a phrase matches any of the mathematical expression whitelist patterns."""
-    return any(re.search(pattern, phrase) for pattern in MATH_WHITELIST_PATTERNS)
+    for pattern in MATH_WHITELIST_PATTERNS:
+        match = re.search(pattern, phrase)
+        if match:
+            return True
+    return False
 
-def find_repeated_phrases(text: str) -> list[tuple[str, int]]:
+def find_repeated_phrases(text: str, sample_id=None) -> list[tuple[str, int]]:
     """Find phrases (3+ words) that are repeated."""
     words = text.split()
     phrases = []
+    whitelisted_phrases = []
     
     # Look for phrases of different lengths
     for phrase_length in range(REPETITION_SETTINGS["phrase_min_words"], 6):
@@ -255,8 +274,22 @@ def find_repeated_phrases(text: str) -> list[tuple[str, int]]:
                 count = text.count(phrase)
                 if count >= REPETITION_SETTINGS["min_repeats"]:
                     # Check if this is a whitelisted mathematical expression
-                    if not is_math_expression(phrase):
+                    if is_math_expression(phrase):
+                        whitelisted_phrases.append((phrase, count))
+                    else:
                         phrases.append((phrase, count))
+    
+    # Log whitelisted phrases if any were found
+    if whitelisted_phrases and sample_id is not None:
+        # Create a truncated sample for logging
+        sample_excerpt = text[:500] + ("..." if len(text) > 500 else "")
+        log_entry = {
+            "sample_id": sample_id,
+            "timestamp": datetime.now().isoformat(),
+            "sample_excerpt": sample_excerpt,
+            "whitelisted_phrases": [{"phrase": p, "count": c} for p, c in whitelisted_phrases]
+        }
+        whitelist_logger.info(json.dumps(log_entry))
     
     return phrases
 
@@ -288,8 +321,11 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
     contents = [completion[0]["content"] for completion in completions]
     
     rewards = []
-    for text in contents:
+    for i, text in enumerate(contents):
         reward = 0.0
+        
+        # Generate a sample ID for logging
+        sample_id = f"sample_{i}_{hash(text) % 10000}"
         
         # 1. Check for consecutive repetitions of same-script characters
         try:
@@ -328,8 +364,8 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
         for seq, changes in mixed_scripts:
             reward -= len(seq) * changes * REPETITION_PENALTIES["mixed_script_spam"]
             
-        # 7. Check for repeated phrases
-        repeated_phrases = find_repeated_phrases(text)
+        # 7. Check for repeated phrases with logging of whitelisted phrases
+        repeated_phrases = find_repeated_phrases(text, sample_id)
         for phrase, count in repeated_phrases:
             reward -= len(phrase) * count * REPETITION_PENALTIES["phrase"]
             
