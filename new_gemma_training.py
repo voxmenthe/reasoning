@@ -187,7 +187,11 @@ training_args = GRPOConfig(
     # Use adamw_torch which is MPS-compatible (not 8bit version)
     optim="adamw_torch",
     
+    # Increase logging frequency
     logging_steps=1,
+    logging_first_step=True,
+    log_level="info",
+    
     per_device_train_batch_size=per_device_batch,
     gradient_accumulation_steps=grad_accum,
     num_generations=2,  # This needs to evenly divide into the batch size
@@ -246,11 +250,16 @@ class OutputLoggingCallback(TrainerCallback):
     def on_step_end(self, args, state, control, logs=None, **kwargs):
         self.log_counter += 1
         if self.log_counter % 5 == 0 and logs:  # Log every 5 steps
+            if 'loss' in logs:
+                logger.info(f"Step {state.global_step}: Loss: {logs['loss']}")
             if 'rewards/correctness_reward_func' in logs:
                 logger.info(f"Step {state.global_step}: Correctness reward: {logs['rewards/correctness_reward_func']}")
             if 'rewards/anti_repetition_reward_func' in logs:
                 logger.info(f"Step {state.global_step}: Anti-repetition reward: {logs['rewards/anti_repetition_reward_func']}")
             logger.info(f"Step {state.global_step}: Total reward: {logs.get('reward', 'N/A')}")
+            
+            # Log all available metrics for debugging
+            logger.info(f"Step {state.global_step}: Available metrics: {', '.join(logs.keys())}")
         
         return control
 
