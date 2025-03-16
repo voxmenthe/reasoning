@@ -21,6 +21,27 @@ from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig, Tra
 from peft import LoraConfig, get_peft_model, PeftModel
 from trl import GRPOConfig, GRPOTrainer
 
+# Custom forward wrapper to ensure inputs require gradients
+class ForwardWrapper:
+    def __init__(self, model):
+        self.model = model
+        
+    def __call__(self, *args, **kwargs):
+        # Ensure inputs have requires_grad=True
+        for k, v in kwargs.items():
+            if isinstance(v, torch.Tensor) and not v.requires_grad:
+                kwargs[k] = v.detach().clone().requires_grad_(True)
+                
+        # For positional args
+        new_args = []
+        for arg in args:
+            if isinstance(arg, torch.Tensor) and not arg.requires_grad:
+                new_args.append(arg.detach().clone().requires_grad_(True))
+            else:
+                new_args.append(arg)
+        
+        return self.model(*new_args, **kwargs)
+
 # Import reward functions configuration
 from reward_config import REWARD_FUNCTIONS
 
@@ -203,6 +224,16 @@ logger.info(f"Gradient accumulation steps: {training_args.gradient_accumulation_
 logger.info(f"Number of epochs: {training_args.num_train_epochs}")
 logger.info(f"Max steps: {training_args.max_steps}")
 
+# Ensure LoRA weights are correctly set to require gradients
+for name, param in model.named_parameters():
+    if 'lora' in name:  # Check if parameter is part of LoRA
+        param.requires_grad = True
+        
+# Confirm trainable parameters have requires_grad=True
+trainable_params = [name for name, param in model.named_parameters() if param.requires_grad]
+logger.info(f"Trainable parameters: {len(trainable_params)}")
+logger.info(f"Sample trainable parameters: {trainable_params[:5]}")
+
 # Custom callback to log model outputs during training
 class OutputLoggingCallback(TrainerCallback):
     def __init__(self):
@@ -226,6 +257,10 @@ class OutputLoggingCallback(TrainerCallback):
     def on_train_end(self, args, state, control, **kwargs):
         logger.info("Training completed")
         return control
+
+# Apply the forward wrapper to ensure inputs have requires_grad=True
+original_forward = model.forward
+model.forward = ForwardWrapper(model.forward)
 
 trainer = GRPOTrainer(
     model=model,
