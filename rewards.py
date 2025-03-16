@@ -19,7 +19,9 @@ from reward_config import (
     TRAILING_CONTENT_PENALTY,
     REPETITION_SETTINGS,
     TOPIC_SETTINGS,
-    TOPIC_PENALTIES
+    TOPIC_PENALTIES,
+    ANTI_REPETITION_SCALE,
+    MAX_ANTI_REPETITION_PENALTY
 )
 
 def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
@@ -290,6 +292,12 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
         non_latin_repeats = find_non_latin_repeats(text)
         for seq, count in non_latin_repeats:
             reward -= len(seq) * count * REPETITION_PENALTIES["non_latin_spam"]
+        
+        # Apply scaling factor to reduce the overwhelming penalty
+        reward *= ANTI_REPETITION_SCALE
+        
+        # Cap the maximum penalty
+        reward = max(reward, MAX_ANTI_REPETITION_PENALTY)
         
         rewards.append(reward)
     
