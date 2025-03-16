@@ -25,6 +25,9 @@ import re
 import csv
 from pathlib import Path
 
+# Import reward functions configuration
+from reward_config import REWARD_FUNCTIONS
+
 # Custom forward wrapper to ensure inputs require gradients
 class ForwardWrapper:
     def __init__(self, model):
@@ -46,8 +49,7 @@ class ForwardWrapper:
         
         return self.model(*new_args, **kwargs)
 
-# Import reward functions configuration
-from reward_config import REWARD_FUNCTIONS
+
 
 # Set up logging
 logging.basicConfig(
@@ -61,7 +63,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import dataset functions from separate module
-from reasoning_dataset import (
+from src.datasets.reasoning_dataset import (
     get_gsm8k_questions, 
     process_chat_data
 )

@@ -9,7 +9,7 @@ from datetime import datetime
 from tqdm import tqdm
 from transformers import Gemma3ForCausalLM, AutoTokenizer, GenerationConfig
 from peft import PeftModel
-from reasoning_dataset import get_gsm8k_questions
+from src.datasets.reasoning_dataset import get_gsm8k_questions
 
 # Import credentials
 from creds import all_creds

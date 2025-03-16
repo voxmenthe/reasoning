@@ -46,7 +46,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import dataset functions from separate module
-from reasoning_dataset import (
+from src.datasets.reasoning_dataset import (
     get_gsm8k_questions, 
     process_chat_data
 )
