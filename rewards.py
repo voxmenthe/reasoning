@@ -24,6 +24,45 @@ from reward_config import (
     MAX_ANTI_REPETITION_PENALTY
 )
 
+# Define mathematical expression whitelist patterns
+MATH_WHITELIST_PATTERNS = [
+    r"Let \$[A-Za-z]\$ be the",  # Variable declarations
+    r"Let \$[A-Za-z]\$ be",
+    r"Let [a-z] be the",
+    r"[Ss]olving for \$[A-Za-z]\$",
+    r"[Ss]ubstituting",
+    r"[Tt]herefore",
+    r"[Ww]e have",
+    r"[Uu]sing the",
+    r"[Cc]hecking our (answer|solution|work)",
+    r"[Vv]erify(ing)? (that|our|the)",
+    r"[Ww]e (can|need to) (calculate|compute|find)",
+    r"[Tt]o verify",
+    r"[Ww]e get",
+    r"\$[A-Za-z]\$ = \d+",  # Common equation formats
+]
+
+"""
+Alternative Approaches to Fix Repetition Penalties:
+
+1. Semantic Context Analysis Approach:
+   - Instead of just counting repeated phrases, analyze their semantic role and context
+   - Implement semantic similarity checking between contexts where phrases appear
+   - Only penalize when phrases are repeated in similar contexts without adding new information
+   - Use embeddings or other NLP techniques to understand when repetition serves a purpose
+   - Benefits: More nuanced understanding of text structure; works across domains
+   - Challenges: Computationally expensive; requires sophisticated NLP models
+
+2. Adaptive Thresholding Approach:
+   - Dynamically adjust penalty thresholds based on detected content type
+   - For mathematical/scientific reasoning, allow higher repetition thresholds
+   - Implement statistical baselines for "normal" repetition in different contexts
+   - Use deviation from typical patterns rather than absolute counts
+   - Calculate a "repetition expectation" for mathematical discourse vs. other types
+   - Benefits: Self-adjusting to domain; doesn't require explicit pattern matching
+   - Challenges: Requires training data for different discourse types; complex to calibrate
+"""
+
 def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
     """Rewards the model when its answer matches the correct answer"""
     responses = [completion[0]['content'] for completion in completions]
@@ -199,6 +238,10 @@ def find_mixed_script_sequences(text: str) -> list[tuple[str, int]]:
     problematic_segments = analyze_script_changes(text)
     return [(segment, changes) for segment, _, changes in problematic_segments]
 
+def is_math_expression(phrase: str) -> bool:
+    """Check if a phrase matches any of the mathematical expression whitelist patterns."""
+    return any(re.search(pattern, phrase) for pattern in MATH_WHITELIST_PATTERNS)
+
 def find_repeated_phrases(text: str) -> list[tuple[str, int]]:
     """Find phrases (3+ words) that are repeated."""
     words = text.split()
@@ -211,7 +254,9 @@ def find_repeated_phrases(text: str) -> list[tuple[str, int]]:
             if len(phrase) <= REPETITION_SETTINGS["max_phrase_length"]:
                 count = text.count(phrase)
                 if count >= REPETITION_SETTINGS["min_repeats"]:
-                    phrases.append((phrase, count))
+                    # Check if this is a whitelisted mathematical expression
+                    if not is_math_expression(phrase):
+                        phrases.append((phrase, count))
     
     return phrases
 
