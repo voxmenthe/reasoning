@@ -64,7 +64,7 @@ REPETITION_SETTINGS = {
     "max_phrase_length": 50,     # Maximum characters in a phrase to check for repetition
     "supported_scripts": [        # Scripts to check for mixed-script repetition
         "Latin", "Devanagari", "Thai", "Arabic", "Cyrillic", 
-        "Han", "Hiragana", "Katakana", "Korean"
+        "Han", "Hiragana", "Katakana", "Hangul"
     ],
     # New settings for legitimate multilingual content
     "max_script_changes_per_sentence": 3,  # Allow up to 3 script changes per sentence before penalizing

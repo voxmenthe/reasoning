@@ -7,6 +7,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
+nltk.download('punkt_tab')
+
 from reward_config import (
     CORRECTNESS_REWARD,
     INTEGER_REWARD,
