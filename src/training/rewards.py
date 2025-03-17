@@ -10,6 +10,7 @@ import logging
 import os
 import json
 from datetime import datetime
+from math import log
 
 nltk.download('punkt_tab')
 
@@ -25,7 +26,8 @@ from src.training.reward_config import (
     TOPIC_SETTINGS,
     TOPIC_PENALTIES,
     ANTI_REPETITION_SCALE,
-    MAX_ANTI_REPETITION_PENALTY
+    MAX_ANTI_REPETITION_PENALTY,
+    REPETITION_CONTEXT
 )
 
 
@@ -381,7 +383,7 @@ def find_non_latin_repeats(text: str) -> list[tuple[str, int]]:
         return []
 
 def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
-    """Penalizes repetitive text patterns in completions"""
+    """Penalizes repetitive text patterns in completions using a logarithmic threshold-based approach"""
     # Handle different completion formats
     if completions and isinstance(completions[0], str):
         contents = completions
@@ -393,10 +395,28 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
             
     rewards = []
     for i, text in enumerate(contents):
-        reward = 0.0
+        # Determine if this is likely math reasoning based on XML tags or math patterns
+        is_math_content = "<reasoning>" in text or any(re.search(pattern, text) for pattern in MATH_WHITELIST_PATTERNS[:5])
+        context_type = "math_reasoning" if is_math_content else "general"
+        
+        # Get the appropriate thresholds for this content type
+        threshold = REPETITION_CONTEXT[context_type]["acceptable_threshold"]
+        log_base = REPETITION_CONTEXT[context_type]["logarithmic_base"]
         
         # Generate a sample ID for logging
         sample_id = f"sample_{i}_{hash(text) % 10000}"
+        
+        # Collect repetition data instead of immediately penalizing
+        repetition_data = {
+            "consecutive_script": 0,
+            "pattern": 0,
+            "punctuation": 0,
+            "word": 0,
+            "no_space_word": 0,
+            "mixed_script_spam": 0,
+            "phrase": 0,
+            "non_latin_spam": 0
+        }
         
         # 1. Check for consecutive repetitions of same-script characters
         try:
@@ -404,7 +424,7 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
             consecutive_repeats = r'([\p{Script=Han}]{10,}|[\p{Script=Arabic}]{10,}|[\p{Script=Tamil}]{10,}|[\p{Script=Cyrillic}]{10,})'
             consecutive_matches = regex.findall(consecutive_repeats, text, regex.UNICODE)
             if consecutive_matches:
-                reward -= sum(len(match) for match in consecutive_matches) * REPETITION_PENALTIES["consecutive_script"]
+                repetition_data["consecutive_script"] = sum(len(match) for match in consecutive_matches)
         except ImportError:
             pass
             
@@ -412,44 +432,59 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
         repeating_pattern = r'(.{2,}?)\1{3,}'
         repetition_matches = re.findall(repeating_pattern, text)
         if repetition_matches:
-            reward -= sum(len(pattern) for pattern in repetition_matches) * REPETITION_PENALTIES["pattern"]
+            repetition_data["pattern"] = sum(len(pattern) for pattern in repetition_matches)
         
         # 3. Check for repetitive punctuation
         repeating_punctuation = r'([.]{5,}|["][.]["]{'+'3,}|[.]["][.]["]{'+'2,})'
         punct_matches = re.findall(repeating_punctuation, text)
         if punct_matches:
-            reward -= sum(len(match) for match in punct_matches) * REPETITION_PENALTIES["punctuation"]
+            repetition_data["punctuation"] = sum(len(match) for match in punct_matches)
             
         # 4. Check for repeated words with spaces
         word_repetitions = find_repeated_words(text)
         for word, count in word_repetitions:
-            reward -= len(word) * count * REPETITION_PENALTIES["word"]
+            repetition_data["word"] += len(word) * count
             
         # 5. Check for repeated sequences without spaces
         no_space_repetitions = find_no_space_repetitions(text)
         for seq, count in no_space_repetitions:
-            reward -= len(seq) * count * REPETITION_PENALTIES["no_space_word"]
+            repetition_data["no_space_word"] += len(seq) * count
             
         # 6. Check for problematic mixed script sequences
         mixed_scripts = find_mixed_script_sequences(text)
         for seq, changes in mixed_scripts:
-            reward -= len(seq) * changes * REPETITION_PENALTIES["mixed_script_spam"]
+            repetition_data["mixed_script_spam"] += len(seq) * changes
             
         # 7. Check for repeated phrases with logging of whitelisted phrases
         repeated_phrases = find_repeated_phrases(text, sample_id)
         for phrase, count in repeated_phrases:
-            reward -= len(phrase) * count * REPETITION_PENALTIES["phrase"]
+            repetition_data["phrase"] += len(phrase) * count
             
         # 8. Check for problematic non-Latin script repetitions
         non_latin_repeats = find_non_latin_repeats(text)
         for seq, count in non_latin_repeats:
-            reward -= len(seq) * count * REPETITION_PENALTIES["non_latin_spam"]
+            repetition_data["non_latin_spam"] += len(seq) * count
         
-        # Apply scaling factor to reduce the overwhelming penalty
+        # Apply the new logarithmic threshold-based approach
+        reward = 0.0
+        has_penalty = False
+        
+        for repetition_type, count in repetition_data.items():
+            # Only apply penalty if the repetition exceeds the acceptable threshold
+            if count > threshold:
+                # Use logarithmic scaling to reduce impact of large counts
+                penalty = REPETITION_PENALTIES[repetition_type] * log(count - threshold + 1, log_base)
+                reward -= penalty
+                has_penalty = True
+        
+        # Apply scaling factor
         reward *= ANTI_REPETITION_SCALE
         
         # Cap the maximum penalty
         reward = max(reward, MAX_ANTI_REPETITION_PENALTY)
+        
+        # Add debugging info to the sample_id
+        sample_id = f"sample_{i}_len:{len(text)}_has_penalty:{has_penalty}"
         
         rewards.append(reward)
     

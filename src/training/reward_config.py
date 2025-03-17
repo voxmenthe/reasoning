@@ -28,9 +28,37 @@ Negative rewards (penalties) can reduce the total significantly:
   - Topic drift penalty: -0.5 per topic change
 """
 
+from src.training.reward_config import (
+    CORRECTNESS_REWARD,
+    INTEGER_REWARD,
+    STRICT_FORMAT_REWARD,
+    SOFT_FORMAT_REWARD,
+    XML_TAG_WEIGHTS,
+    REPETITION_PENALTIES,
+    TRAILING_CONTENT_PENALTY,
+    REPETITION_SETTINGS,
+    TOPIC_SETTINGS,
+    TOPIC_PENALTIES,
+    ANTI_REPETITION_SCALE,
+    MAX_ANTI_REPETITION_PENALTY,
+    REPETITION_CONTEXT
+)
+
 # Anti-repetition scaling factor - reduces the overwhelming penalty
-ANTI_REPETITION_SCALE = 0.01  # Scale down the anti-repetition penalty (reduced from 0.075)
-MAX_ANTI_REPETITION_PENALTY = -1.0  # Cap the maximum anti-repetition penalty (less aggressive than -9.0)
+ANTI_REPETITION_SCALE = 0.06  # Scale down the anti-repetition penalty (reduced from 0.075)
+MAX_ANTI_REPETITION_PENALTY = -4.0  # Cap the maximum anti-repetition penalty (less aggressive than -9.0)
+
+# New: Context-aware repetition thresholds for different content types
+REPETITION_CONTEXT = {
+    "math_reasoning": {
+        "acceptable_threshold": 5,  # Allow up to this many repetitions before penalty starts
+        "logarithmic_base": 1.5,    # Use logarithmic scaling with this base for repetitions beyond threshold
+    },
+    "general": {
+        "acceptable_threshold": 2,  # Stricter threshold for general content
+        "logarithmic_base": 2.0,    # Faster penalty growth for general content
+    }
+}
 
 # Core reward weights
 CORRECTNESS_REWARD = 4.00  # Primary objective - correct answer
