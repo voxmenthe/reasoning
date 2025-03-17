@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 from datasets import Dataset, load_from_disk
 import functools
+import datetime
 
 # Import our centralized logging system
 from src.logging import (
@@ -44,7 +45,8 @@ from src.logging import (
     log_training_progress,
     log_memory_usage,
     log_reward_metrics,
-    log_generation_metrics
+    log_generation_metrics,
+    log_generation_with_rewards
 )
 
 # Import our custom callback
@@ -579,20 +581,70 @@ def test_model(model, tokenizer, questions=None):
         logger.info("\nExtracted reasoning: " + reasoning)
         logger.info("Extracted answer: " + answer)
         
+        # Evaluate with reward functions to log values
+        from src.training.rewards import (
+            xmlcount_reward_func,
+            soft_format_reward_func,
+            strict_format_reward_func,
+            int_reward_func,
+            correctness_reward_func,
+            anti_repetition_reward_func,
+            topic_relevance_reward_func
+        )
+        
+        # Extract test answer (for correctness testing)
+        if i == 0:  # First sample hardcoded answer
+            true_answer = "25"
+        else:
+            true_answer = ""
+            
+        # Create unique question ID with source identifier
+        run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        question_id = f"test_run_{run_timestamp}_sample_{i}"
+        
+        # Calculate rewards
+        rewards = {}
+        rewards["xmlcount_reward_func"] = xmlcount_reward_func([output])[0]
+        rewards["soft_format_reward_func"] = soft_format_reward_func([output])[0]
+        rewards["strict_format_reward_func"] = strict_format_reward_func([output])[0]
+        rewards["int_reward_func"] = int_reward_func([output])[0]
+        
+        # Only calculate correctness if we have a true answer
+        if true_answer:
+            rewards["correctness_reward_func"] = correctness_reward_func([question], [output], [true_answer])[0]
+        
+        rewards["anti_repetition_reward_func"] = anti_repetition_reward_func([output])[0]
+        rewards["topic_relevance_reward_func"] = topic_relevance_reward_func([question], [output])[0]
+        
+        # Log to CSV with rewards
+        log_generation_with_rewards(
+            question=question,
+            true_answer=true_answer,
+            model_output=output,
+            rewards=rewards,
+            reasoning=reasoning,
+            answer=answer,
+            step=0,  # No training step for test samples
+            question_id=question_id
+        )
+        
         # Store results
         test_results.append({
             "question": question,
             "model_output": output,
             "reasoning": reasoning,
-            "answer": answer
+            "answer": answer,
+            "rewards": rewards
         })
         
         # Log to the model logger
         log_model_output(
             question=question,
+            true_answer=true_answer,
             model_output=output,
             reasoning=reasoning,
-            answer=answer
+            answer=answer,
+            question_id=question_id
         )
     
     logger.info("\nTesting complete!")

@@ -2,131 +2,120 @@
 
 ## CSV Schema
 
-Proposed columns for the CSV logging file:
+Implemented columns for the CSV logging file:
 
 ```
-timestamp,global_step,question_id,question,model_output,reasoning,answer,total_reward,xmlcount_reward,soft_format_reward,strict_format_reward,int_reward,correctness_reward,anti_repetition_reward,topic_relevance_reward
+timestamp,global_step,question_id,question,ground_truth_answer,model_output,reasoning,model_answer,total_reward,correctness_reward_func,anti_repetition_reward_func,soft_format_reward_func,strict_format_reward_func,int_reward_func,xmlcount_reward_func,topic_relevance_reward_func
 ```
 
 ### Column Descriptions:
 
 1. `timestamp` - ISO format timestamp of when the generation was logged
 2. `global_step` - Training step when the generation was created
-3. `question_id` - Unique identifier for the question (from dataset if available, otherwise create unique reproducible hash from question + answer)
+3. `question_id` - Source-identified unique ID (includes source, date, and hash of question+answer)
 4. `question` - The actual question/prompt text
-5. `ground_truth_answer` - The actual answer from the dataset
+5. `ground_truth_answer` - The expected answer from the dataset
 6. `model_output` - Full raw model output
 7. `reasoning` - Extracted reasoning from XML tags
 8. `model_answer` - Extracted answer from XML tags
 9. `total_reward` - Sum of all reward values
 10. Individual reward columns - One column per reward function
-   - `xmlcount_reward`
-   - `soft_format_reward`
-   - `strict_format_reward`
-   - `int_reward`
-   - `correctness_reward`
-   - `anti_repetition_reward`
-   - `topic_relevance_reward`
+   - `correctness_reward_func`
+   - `anti_repetition_reward_func`
+   - `soft_format_reward_func`
+   - `strict_format_reward_func`
+   - `int_reward_func`
+   - `xmlcount_reward_func`
+   - `topic_relevance_reward_func`
 
-## Implementation Plan
+## Implementation Plan (Completed ✅)
 
-1. **Create a new CSV Logger class**
-   - Add a new file `src/logging/csv_logger.py`
-   - Implement thread-safe CSV writing with a queue
-   - Include batch writing for performance
+1. **Create a new CSV Logger class** ✅
+   - Added `src/logging/csv_logger.py` with thread-safe implementation
+   - Implemented batch writing with queue for performance
+   - Added proper error handling and flush capability
 
-2. **Integrate with existing logging system**
-   - Update `src/logging/__init__.py` to expose CSV logging functions
-   - Add CSV config options to the logging config file
+2. **Integrate with existing logging system** ✅
+   - Updated `src/logging/__init__.py` to expose CSV logging functions
+   - Added CSV config options to `src/logging/config/gemma_logging_config.yaml`
+   - Implemented automatic initialization during logging setup
 
-3. **Modify reward function wrappers**
-   - Update `get_wrapped_reward_functions()` to capture rewards for CSV logging
-   - Add a collector for reward values
+3. **Modified reward function wrappers** ✅
+   - Updated reward functions to collect individual reward values
+   - Implemented thread-local storage for reward collection
+   - Added `reset_rewards_collection()` to clear between batches
 
-4. **Update OptimizedLoggingCallback**
-   - Modify callback to collect generation/reward data during training
-   - Integrate with CSV logger to write at appropriate intervals
+4. **Updated OptimizedLoggingCallback** ✅
+   - Modified callback to use the CSV logging system
+   - Added generation of question IDs with source identifiers
+   - Integration with reward collection system
+   - Added CSV flushing on training end
 
-5. **Update test_model function**
-   - Add CSV logging to the test_model function for evaluation runs
-   - Include batch identifier to distinguish training from evaluation
+5. **Updated test_model function** ✅
+   - Added direct reward calculation for testing samples
+   - Implemented CSV logging for test samples
+   - Added clearly marked test question IDs with timestamps
+
+6. **Implemented timestamped CSV files** ✅
+   - Added automatic timestamp to CSV filenames
+   - Modified initialization to create separate files for each run
+   - Added robust directory creation to handle missing logs dir
+   - Added source identification to distinguish training vs test samples
 
 ## Technical Implementation Details
 
-### CSV Writer with Queue
-```python
-class CSVLogger:
-    def __init__(self, csv_path):
-        self.csv_path = csv_path
-        self.queue = queue.Queue()
-        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
-        self.worker_thread.start()
-        self.header_written = False
-        
-    def log_generation(self, data_dict):
-        """Add a generation record to the CSV queue"""
-        self.queue.put(data_dict)
-        
-    def _worker(self):
-        """Background thread that processes the queue and writes to CSV"""
-        while True:
-            # Batch process for efficiency
-            batch = []
-            try:
-                # Get at least one item
-                batch.append(self.queue.get(block=True, timeout=1.0))
-                
-                # Get more items if available (up to 50)
-                for _ in range(49):
-                    try:
-                        batch.append(self.queue.get(block=False))
-                    except queue.Empty:
-                        break
-                        
-                if batch:
-                    self._write_batch_to_csv(batch)
-                    
-                # Mark tasks as done
-                for _ in range(len(batch)):
-                    self.queue.task_done()
-                    
-            except queue.Empty:
-                # No items available
-                time.sleep(0.1)
-                continue
-                
-    def _write_batch_to_csv(self, batch):
-        """Write a batch of records to the CSV file"""
-        if not batch:
-            return
-            
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
-        
-        # Write header if needed
-        if not self.header_written:
-            with open(self.csv_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=list(batch[0].keys()))
-                writer.writeheader()
-                self.header_written = True
-        
-        # Append data
-        with open(self.csv_path, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=list(batch[0].keys()))
-            writer.writerows(batch)
-```
+### CSV Writer with Queue (Implemented ✅)
+The `CSVLogger` class in `src/logging/csv_logger.py` implements a thread-safe CSV writer with:
+- Background thread for non-blocking operation
+- Batch processing of records for efficiency
+- Automatic header detection and writing
+- Configurable queue size and flush intervals
 
-### Integration Points
-1. Initialize CSV logger during training setup
-2. Collect rewards by patching `wrapped_reward_functions`
-3. Update OptimizedLoggingCallback to capture outputs and rewards
-4. Add direct logging in test_model function
+### Integration with Reward Functions (Implemented ✅)
+Each reward function wrapper now:
+1. Calls the original reward function
+2. Logs individual rewards using the standard logging system
+3. Stores rewards in a thread-local collection for CSV logging
+4. Returns original rewards to maintain compatibility
 
-### Configuration Options
+### Timestamped Filenames (Implemented ✅)
+Each training run now creates a separate CSV file with the format:
+- Base directory from config + original filename + timestamp
+- Format: `generations_and_rewards_YYYYMMDD_HHMMSS.csv`
+- Preserves file extension and handles paths with or without extensions
+- Automatically creates directories if they don't exist
+
+### Source Identification (Implemented ✅)
+We've added source identification to question IDs to help with analysis:
+- Training samples: `training_YYYYMMDD_[hash]`
+- Test samples: `test_run_YYYYMMDD_HHMMSS_sample_[index]`
+- Each source has a unique format to avoid overlaps
+- Makes it easy to filter by sample source in analysis
+
+### CSV Logging Config (Implemented ✅)
 ```yaml
 csv_logging:
   enabled: true
   path: "./logs/generations_and_rewards.csv"
   max_queue_size: 1000
   flush_interval_seconds: 10
-``` 
+```
+
+## Testing and Verification
+
+To verify the CSV logging is working properly:
+1. Run training with `python src/training/optimized_gemma_training.py`
+2. Check that a timestamped CSV file is created in `./logs/` directory
+3. Verify that all columns are populated correctly
+4. Run multiple training sessions and confirm separate files are created
+5. Run validation with the test_model function and verify test samples are logged
+6. Confirm that training and test samples have appropriate source identifiers
+
+## Next Steps / Future Improvements
+
+1. Add more flexibility in configuring which rewards are logged
+2. Implement CSV compression for large datasets
+3. Add option to configure timestamp format in the config
+4. Create visualization tools for the CSV data
+5. Add benchmarking to measure logging overhead
+6. Add option to combine multiple CSV logs for analysis 

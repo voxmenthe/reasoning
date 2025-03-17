@@ -11,6 +11,8 @@ import torch
 import time
 import threading
 import queue
+import hashlib
+import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -27,8 +29,12 @@ from src.logging import (
     log_training_progress,
     log_memory_usage,
     log_reward_metrics,
-    log_generation_metrics
+    log_generation_metrics,
+    log_generation_with_rewards
 )
+
+# Import rewards collection utilities
+from src.training.wrapped_rewards import get_collected_rewards, reset_rewards_collection
 
 # Helper function for extracting reasoning and answers
 def extract_reasoning_and_answer(text: str) -> Tuple[str, str]:
@@ -57,6 +63,29 @@ def extract_reasoning_and_answer(text: str) -> Tuple[str, str]:
     
     return reasoning, answer
 
+def generate_question_id(question: str, answer: Optional[str] = None, source: str = "training") -> str:
+    """Generate a deterministic ID for a question.
+    
+    Args:
+        question: The question text
+        answer: Optional answer text to include in the hash
+        source: Source identifier (training, test, etc.)
+        
+    Returns:
+        A hash-based ID for the question
+    """
+    # Use a combination of question and answer if available
+    hash_input = question
+    if answer is not None:
+        hash_input += answer
+        
+    # Create a deterministic hash
+    question_hash = hashlib.md5(hash_input.encode('utf-8')).hexdigest()[:12]
+    
+    # Add source identifier and timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d")
+    return f"{source}_{timestamp}_{question_hash}"
+
 
 class OptimizedLoggingCallback(TrainerCallback):
     """Optimized callback that integrates with the centralized logging system.
@@ -65,6 +94,7 @@ class OptimizedLoggingCallback(TrainerCallback):
     - Reduced logging frequency for improved performance
     - Background processing for model output logging
     - Support for checkpointing
+    - CSV logging of generations, answers, and rewards
     """
     
     def __init__(self, checkpoint_dir=None):
@@ -183,17 +213,54 @@ class OptimizedLoggingCallback(TrainerCallback):
                 true_answers = batch_info.get('true_answers', [])
                 model_outputs = batch_info.get('model_outputs', [])
                 
+                # Get collected rewards from the wrapped reward functions
+                collected_rewards = get_collected_rewards()
+                
                 # Process each example in the batch
                 for i in range(len(questions)):
-                    if i < len(questions) and i < len(true_answers) and i < len(model_outputs):
+                    if i < len(questions) and i < len(model_outputs):
                         question = questions[i]
-                        true_answer = true_answers[i]
+                        true_answer = true_answers[i] if i < len(true_answers) else ""
                         model_output = model_outputs[i]
                         
                         # Extract reasoning and answer from model output
                         llm_reasoning, llm_answer = extract_reasoning_and_answer(model_output)
                         
-                        # Add to buffer instead of immediate logging
+                        # Generate a deterministic question ID
+                        question_id = generate_question_id(
+                            question=question, 
+                            answer=true_answer,
+                            source="training"
+                        )
+                        
+                        # Get rewards for this sample
+                        sample_rewards = collected_rewards.get(i, {})
+                        
+                        # Log to CSV if there are rewards available
+                        if sample_rewards:
+                            log_generation_with_rewards(
+                                question=question,
+                                true_answer=true_answer,
+                                model_output=model_output,
+                                rewards=sample_rewards,
+                                reasoning=llm_reasoning,
+                                answer=llm_answer,
+                                step=state.global_step,
+                                question_id=question_id
+                            )
+                        else:
+                            # No rewards available, log model output only
+                            log_model_output(
+                                question=question,
+                                true_answer=true_answer,
+                                model_output=model_output,
+                                reasoning=llm_reasoning,
+                                answer=llm_answer,
+                                step=state.global_step,
+                                question_id=question_id
+                            )
+                        
+                        # Add to buffer for additional processing
                         self.model_output_buffer.append({
                             "question": question,
                             "true_answer": true_answer,
@@ -208,6 +275,9 @@ class OptimizedLoggingCallback(TrainerCallback):
                         step=state.global_step,
                         generations=model_outputs
                     )
+                    
+                # Reset rewards collection for the next batch
+                reset_rewards_collection()
             except Exception as e:
                 self.logger.warning(f"Error capturing training data: {str(e)}")
         
@@ -247,22 +317,13 @@ class OptimizedLoggingCallback(TrainerCallback):
                     self.logger.info(f"Step {state.global_step}: Loss: {logs['loss']:.6f}")
                 if 'correctness_reward_func' in reward_metrics:
                     self.logger.info(f"Step {state.global_step}: Correctness reward: {reward_metrics['correctness_reward_func']:.6f}")
-                
-                self.logger.info(f"Step {state.global_step}: Accuracy so far: {self.correct_answers}/{self.total_answers} ({accuracy:.2f}%)")
-            
-            # Log memory usage at this frequency
-            if self.log_counter % self.memory_log_frequency == 0:
-                log_memory_usage()
         
-        # Handle checkpointing if enabled
-        if self.checkpoint_dir and state.global_step > 0 and state.global_step % 250 == 0:
-            checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint-{state.global_step}")
-            self.logger.info(f"Saving additional checkpoint to {checkpoint_path}")
-            
-            # The actual saving is handled by the trainer, we're just logging it
+        # Log memory usage at reduced frequency
+        if self.log_counter % self.memory_log_frequency == 0:
+            log_memory_usage()
         
         return control
-
+    
     def on_train_end(self, args, state, control, **kwargs):
         """Called at the end of training.
         
@@ -272,56 +333,57 @@ class OptimizedLoggingCallback(TrainerCallback):
             control: Trainer control object
             **kwargs: Additional arguments
         """
-        # Calculate final accuracy
-        accuracy = 0.0
-        if self.total_answers > 0:
-            accuracy = (self.correct_answers / self.total_answers) * 100
-            
-        # Print final progress and add a newline 
-        progress_pct = 100.0
-        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps ({progress_pct:.1f}%) | Correct: {self.correct_answers}/{self.total_answers} ({accuracy:.1f}%)")
-        print("\nTraining completed!")
-        
-        # Process any remaining outputs in buffer
+        # Process any remaining outputs in the buffer
         if self.model_output_buffer:
             self._process_model_output_buffer(self.model_output_buffer)
             self.model_output_buffer = []
         
-        # Log final statistics
+        # Log final progress
+        progress_pct = 100.0
+        print(f"\nTraining complete: {state.global_step}/{args.max_steps} steps ({progress_pct:.1f}%) | Correct: {self.correct_answers}/{self.total_answers} ({self.correct_answers / max(1, self.total_answers) * 100:.1f}%)")
+        
+        # Log final metrics
+        accuracy = self.correct_answers / max(1, self.total_answers) * 100
         log_training_progress(
             step=state.global_step,
             metrics={
-                "final_accuracy": accuracy,
+                "progress_percent": progress_pct,
                 "correct_answers": self.correct_answers,
                 "total_answers": self.total_answers,
-                "training_complete": True
+                "accuracy": accuracy,
+                "is_final": True
             }
         )
+        
+        # Flush CSV logger
+        try:
+            from src.logging.csv_logger import get_csv_logger
+            csv_logger = get_csv_logger()
+            if csv_logger is not None:
+                csv_logger.flush()
+                self.logger.info("CSV logs flushed to disk")
+        except ImportError:
+            pass
         
         # Log final memory usage
         log_memory_usage()
         
-        self.logger.info(f"Training completed. Final accuracy: {accuracy:.2f}%")
+        self.logger.info("Training completed")
         
         return control
-        
+    
     def _process_model_output_buffer(self, buffer):
-        """Process buffered model outputs in background.
+        """Process the buffer of model outputs in a background thread.
         
         Args:
-            buffer: List of model output dictionaries to process
+            buffer: List of dictionaries containing model outputs
         """
-        if not buffer:
-            return
-            
         try:
-            for item in buffer:
-                log_model_output(
-                    question=item["question"],
-                    true_answer=item["true_answer"],
-                    model_output=item["model_output"],
-                    reasoning=item["reasoning"],
-                    answer=item["answer"]
-                )
+            # This function is now primarily for any additional processing
+            # beyond logging, since we already log the outputs in the main thread
+            # Calculate additional metrics if needed
+            
+            # For now, we'll just log that we processed the buffer
+            self.logger.debug(f"Processed {len(buffer)} model outputs in background thread")
         except Exception as e:
-            self.logger.error(f"Error processing model output buffer: {str(e)}") 
+            self.logger.warning(f"Error processing model output buffer: {str(e)}") 

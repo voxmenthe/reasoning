@@ -7,6 +7,8 @@ that add logging functionality while preserving the original behavior.
 
 import numpy as np
 from typing import List, Dict, Any, Optional
+from functools import wraps
+import threading
 
 # Import the centralized logging system
 from src.logging import (
@@ -39,6 +41,37 @@ from src.training.rewards import (
 # Helper functions from the main rewards module
 # Note: Update this import path as needed based on actual location
 from src.training.rewards import extract_xml_answer
+
+# Thread-local storage for collecting rewards during each batch
+_reward_collection = threading.local()
+
+def get_current_rewards_collection():
+    """Get the thread-local rewards collection for the current batch."""
+    if not hasattr(_reward_collection, 'rewards'):
+        _reward_collection.rewards = {}
+    return _reward_collection.rewards
+
+def reset_rewards_collection():
+    """Reset the thread-local rewards collection."""
+    if hasattr(_reward_collection, 'rewards'):
+        _reward_collection.rewards = {}
+
+def get_collected_rewards():
+    """Get all collected rewards and clear the collection."""
+    rewards = getattr(_reward_collection, 'rewards', {})
+    reset_rewards_collection()
+    return rewards
+
+def collect_reward(reward_name, index, value):
+    """Collect a reward value for a particular sample index."""
+    rewards = get_current_rewards_collection()
+    
+    # Create an entry for this sample index if it doesn't exist
+    if index not in rewards:
+        rewards[index] = {}
+        
+    # Add the reward value
+    rewards[index][reward_name] = value
 
 
 def wrapped_correctness_reward(prompts, completions, answer, **kwargs) -> List[float]:
@@ -79,6 +112,9 @@ def wrapped_correctness_reward(prompts, completions, answer, **kwargs) -> List[f
                 values=[reward],
                 samples=[f"sample_{i}_correct:{reward>0}_expected:{expected}_extracted:{extracted}"]
             )
+            
+            # Collect reward for CSV logging
+            collect_reward("correctness_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -110,6 +146,9 @@ def wrapped_int_reward(completions, **kwargs) -> List[float]:
             values=[reward],
             samples=[f"sample_{i}_is_integer:{extracted.isdigit()}"]
         )
+        
+        # Collect reward for CSV logging
+        collect_reward("int_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -138,6 +177,9 @@ def wrapped_strict_format_reward(completions, **kwargs) -> List[float]:
             values=[reward],
             samples=[f"sample_{i}_format_correct:{reward>0}_len:{len(response)}"]
         )
+        
+        # Collect reward for CSV logging
+        collect_reward("strict_format_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -166,6 +208,9 @@ def wrapped_soft_format_reward(completions, **kwargs) -> List[float]:
             values=[reward],
             samples=[f"sample_{i}_format_correct:{reward>0}_len:{len(response)}"]
         )
+        
+        # Collect reward for CSV logging
+        collect_reward("soft_format_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -203,6 +248,9 @@ def wrapped_xmlcount_reward(completions, **kwargs) -> List[float]:
             values=[reward],
             samples=[f"sample_{i}_balanced:{balanced}_tags:{reasoning_open},{reasoning_close},{answer_open},{answer_close}"]
         )
+        
+        # Collect reward for CSV logging
+        collect_reward("xmlcount_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -231,6 +279,9 @@ def wrapped_anti_repetition_reward(completions, **kwargs) -> List[float]:
             values=[reward],
             samples=[f"sample_{i}_len:{len(response)}_has_penalty:{reward<0}"]
         )
+        
+        # Collect reward for CSV logging
+        collect_reward("anti_repetition_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -257,8 +308,11 @@ def wrapped_topic_relevance_reward(prompts, completions, **kwargs) -> List[float
         log_reward(
             reward_name="topic_relevance",
             values=[reward],
-            samples=[f"sample_{i}_len:{len(response)}_is_relevant:{reward>=0}"]
+            samples=[f"sample_{i}_relevant:{reward>0.5}"]
         )
+        
+        # Collect reward for CSV logging
+        collect_reward("topic_relevance_reward_func", i, reward)
     
     # Log aggregated metrics
     log_reward_metrics(step=kwargs.get('step', 0), 
@@ -267,7 +321,7 @@ def wrapped_topic_relevance_reward(prompts, completions, **kwargs) -> List[float
     return rewards
 
 
-# Dictionary mapping original reward functions to wrapped versions
+# Map of original reward functions to wrapped versions
 WRAPPED_REWARD_FUNCTIONS = {
     correctness_reward_func: wrapped_correctness_reward,
     int_reward_func: wrapped_int_reward,
@@ -281,4 +335,6 @@ WRAPPED_REWARD_FUNCTIONS = {
 # Create list of wrapped reward functions in the same order as the original REWARD_FUNCTIONS
 def get_wrapped_reward_functions(original_reward_functions):
     """Get wrapped versions of reward functions in the same order as the originals."""
+    # Reset rewards collection
+    reset_rewards_collection()
     return [WRAPPED_REWARD_FUNCTIONS.get(func, func) for func in original_reward_functions] 

@@ -66,6 +66,13 @@ formatters:
     format: json
     fields: [timestamp, level, name, message]
 
+# CSV logging settings
+csv_logging:
+  enabled: true
+  path: "./logs/generations_and_rewards.csv"
+  max_queue_size: 1000
+  flush_interval_seconds: 10
+
 # Model evaluation metrics configuration
 metrics:
   # How frequently to log metrics (in training steps)
