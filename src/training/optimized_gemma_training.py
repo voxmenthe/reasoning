@@ -404,8 +404,8 @@ def train_model():
     logger.info(f"- Total steps: {total_steps}")
     
     # Configure sequence lengths
-    max_prompt_length = 1536 # 1024
-    max_seq_length = 4096 # 2048
+    max_prompt_length = 1160 # 1024
+    max_seq_length = 2608 # 2048
     
     # Configure training arguments with MPS-compatible optimizer
     # Replace "hybrid" cache with "memory" for better performance
