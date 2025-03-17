@@ -249,16 +249,17 @@ class OptimizedGRPOTrainer(GRPOTrainer):
         # Extract checkpoint info before passing to parent
         self.checkpoint_dir = kwargs.pop('checkpoint_dir', None)
         self.checkpoint_steps = kwargs.pop('checkpoint_steps', 100)
+        self.should_resume = kwargs.pop('should_resume', True)
         
         super().__init__(*args, **kwargs)
         self.current_batch_info = None
         
-        # Attempt to resume from checkpoint if it exists
-        self.try_resume_from_checkpoint()
+        # Don't resume in __init__ - optimizer isn't ready yet
+        # We'll resume in train() method instead
         
     def try_resume_from_checkpoint(self):
         """Try to resume training from the latest checkpoint"""
-        if not self.checkpoint_dir:
+        if not self.checkpoint_dir or not self.should_resume:
             return
             
         # Find the latest checkpoint
@@ -307,19 +308,26 @@ class OptimizedGRPOTrainer(GRPOTrainer):
                 else:
                     logger.warning(f"Model weights not found at {model_path}")
                     
-            # Load optimizer state
+            # Load optimizer state - only if optimizer has been initialized
             optimizer_path = latest_checkpoint / "optimizer.pt"
-            if optimizer_path.exists() and hasattr(self, 'optimizer'):
-                self.optimizer.load_state_dict(
-                    torch.load(optimizer_path, map_location=device)
-                )
+            if optimizer_path.exists() and hasattr(self, 'optimizer') and self.optimizer is not None:
+                try:
+                    logger.info(f"Loading optimizer state from {optimizer_path}")
+                    self.optimizer.load_state_dict(
+                        torch.load(optimizer_path, map_location=device)
+                    )
+                except Exception as opt_error:
+                    logger.warning(f"Error loading optimizer state: {str(opt_error)}")
+                    logger.warning("Continuing without loading optimizer state")
                 
             logger.info(f"Successfully resumed from step {self.state.global_step}")
+            return True
             
         except Exception as e:
             logger.error(f"Error resuming from checkpoint: {str(e)}")
             logger.exception("Detailed traceback:")
             # Continue without resuming if there's an error
+            return False
         
     def save_checkpoint(self):
         """Save a checkpoint that can be resumed from"""
@@ -339,9 +347,12 @@ class OptimizedGRPOTrainer(GRPOTrainer):
                 # For regular models use save_pretrained or save model state dict directly
                 self.model.save_pretrained(checkpoint_path)
                 
-            # Save optimizer state
-            if hasattr(self, 'optimizer'):
-                torch.save(self.optimizer.state_dict(), checkpoint_path / "optimizer.pt")
+            # Save optimizer state - only if initialized
+            if hasattr(self, 'optimizer') and self.optimizer is not None:
+                try:
+                    torch.save(self.optimizer.state_dict(), checkpoint_path / "optimizer.pt")
+                except Exception as opt_error:
+                    logger.warning(f"Error saving optimizer state: {str(opt_error)}")
                 
             # Save trainer state
             with open(checkpoint_path / "trainer_state.json", 'w') as f:
@@ -352,9 +363,11 @@ class OptimizedGRPOTrainer(GRPOTrainer):
                 }, f)
                 
             logger.info(f"Saved checkpoint at step {self.state.global_step}")
+            return True
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
             logger.exception("Detailed traceback:")
+            return False
         
     def training_step(self, *args, **kwargs):
         """Override to add checkpoint saving"""
@@ -367,6 +380,11 @@ class OptimizedGRPOTrainer(GRPOTrainer):
         return result
         
     def train(self, *args, **kwargs):
+        # Now try to resume from checkpoint - after optimizer is created by parent class
+        if self.should_resume:
+            # For GRPOTrainer, optimizer should be created by this point
+            self.try_resume_from_checkpoint()
+            
         result = super().train(*args, **kwargs)
         
         # Save final checkpoint
