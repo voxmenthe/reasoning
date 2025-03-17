@@ -285,12 +285,28 @@ class OptimizedGRPOTrainer(GRPOTrainer):
             self.state.global_step = state.get('global_step', 0)
             self.state.epoch = state.get('epoch', 0)
             
-            # Load model weights
+            # Load model weights - properly handled for PEFT models
             logger.info(f"Resuming from checkpoint {latest_checkpoint}")
-            self.model.load_state_dict(
-                torch.load(latest_checkpoint / "pytorch_model.bin", map_location=device)
-            )
-            
+            if hasattr(self.model, 'is_peft_model') and self.model.is_peft_model:
+                # For PEFT/LoRA models, load adapters directly
+                if os.path.exists(latest_checkpoint):
+                    logger.info(f"Loading PEFT adapters from {latest_checkpoint}")
+                    self.model = PeftModel.from_pretrained(
+                        self.model.get_base_model(),
+                        latest_checkpoint,
+                        is_trainable=True,
+                        device_map={"": device}
+                    )
+                else:
+                    logger.warning(f"PEFT adapter checkpoint not found at {latest_checkpoint}")
+            else:
+                # For non-PEFT models, use regular loading
+                model_path = latest_checkpoint / "pytorch_model.bin"
+                if model_path.exists():
+                    self.model.load_state_dict(torch.load(model_path, map_location=device))
+                else:
+                    logger.warning(f"Model weights not found at {model_path}")
+                    
             # Load optimizer state
             optimizer_path = latest_checkpoint / "optimizer.pt"
             if optimizer_path.exists() and hasattr(self, 'optimizer'):
@@ -302,6 +318,7 @@ class OptimizedGRPOTrainer(GRPOTrainer):
             
         except Exception as e:
             logger.error(f"Error resuming from checkpoint: {str(e)}")
+            logger.exception("Detailed traceback:")
             # Continue without resuming if there's an error
         
     def save_checkpoint(self):
@@ -312,22 +329,32 @@ class OptimizedGRPOTrainer(GRPOTrainer):
         checkpoint_path = Path(self.checkpoint_dir) / f"checkpoint-{self.state.global_step}"
         checkpoint_path.mkdir(exist_ok=True, parents=True)
         
-        # Save model
-        self.model.save_pretrained(checkpoint_path)
-        
-        # Save optimizer state
-        if hasattr(self, 'optimizer'):
-            torch.save(self.optimizer.state_dict(), checkpoint_path / "optimizer.pt")
-            
-        # Save trainer state
-        with open(checkpoint_path / "trainer_state.json", 'w') as f:
-            json.dump({
-                'global_step': self.state.global_step,
-                'epoch': self.state.epoch,
-                'best_metric': getattr(self.state, 'best_metric', None),
-            }, f)
-            
-        logger.info(f"Saved checkpoint at step {self.state.global_step}")
+        # Save model - different handling for PEFT models
+        try:
+            if hasattr(self.model, 'is_peft_model') and self.model.is_peft_model:
+                # For PEFT models, save only the adapters
+                logger.info(f"Saving PEFT adapters to {checkpoint_path}")
+                self.model.save_pretrained(checkpoint_path)
+            else:
+                # For regular models use save_pretrained or save model state dict directly
+                self.model.save_pretrained(checkpoint_path)
+                
+            # Save optimizer state
+            if hasattr(self, 'optimizer'):
+                torch.save(self.optimizer.state_dict(), checkpoint_path / "optimizer.pt")
+                
+            # Save trainer state
+            with open(checkpoint_path / "trainer_state.json", 'w') as f:
+                json.dump({
+                    'global_step': self.state.global_step,
+                    'epoch': self.state.epoch,
+                    'best_metric': getattr(self.state, 'best_metric', None),
+                }, f)
+                
+            logger.info(f"Saved checkpoint at step {self.state.global_step}")
+        except Exception as e:
+            logger.error(f"Error saving checkpoint: {str(e)}")
+            logger.exception("Detailed traceback:")
         
     def training_step(self, *args, **kwargs):
         """Override to add checkpoint saving"""

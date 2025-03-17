@@ -444,6 +444,28 @@ def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
 
 def extract_xml_answer(text: str) -> str:
     """Extract the answer from XML-formatted text"""
+    # First try the XML format
+    if "<answer>" in text and "</answer>" in text:
+        answer = text.split("<answer>")[-1]
+        answer = answer.split("</answer>")[0]
+        return answer.strip()
+    
+    # If not found, try the "Final Answer" format
+    final_answer_match = re.search(r"Final Answer:.*?(\d+)", text)
+    if final_answer_match:
+        return final_answer_match.group(1).strip()
+    
+    # Try to extract from LaTeX boxed format
+    boxed_match = re.search(r"\$\\boxed\{(\d+)\}\$", text)
+    if boxed_match:
+        return boxed_match.group(1).strip()
+    
+    # Try to match any "Answer:" format with numerical values
+    answer_match = re.search(r"(?i)(?:\*\*)?(?:answer|solution)(?:\*\*)?:.*?(\d+(?:\.\d+)?)", text)
+    if answer_match:
+        return answer_match.group(1).strip()
+    
+    # If all else fails, return the original XML extraction (which might be empty)
     answer = text.split("<answer>")[-1]
     answer = answer.split("</answer>")[0]
     return answer.strip()
