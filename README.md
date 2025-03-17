@@ -70,7 +70,15 @@ python -m ipykernel install --user --name=gemma3 --display-name "Gemma3"
 
 ## Usage
 
-TODO: Add usage instructions.
+Run with:
+```bash
+python -m src.training.optimized_gemma_training
+```
+
+Run tensorboard with:
+```bash
+tensorboard --logdir=logs/gemma_tensorboard
+```
 
 ## License
 
