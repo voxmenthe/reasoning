@@ -55,6 +55,19 @@ MATH_WHITELIST_PATTERNS = [
     r"[Tt]o verify",
     r"[Ww]e get",
     r"\$[A-Za-z]\$ = \d+",  # Common equation formats
+    r"(Total|Sum|Number of) .* is",  # Common summation expressions
+    r"(Step \d+:|1\.|2\.|3\.|4\.|5\.)",  # Numbered steps in solutions
+    r"(First|Second|Third|Next|Finally)",  # Sequential step indicators
+    r"The (total|answer) is",  # Answer statements
+    r"We know that",  # Common reasoning phrase
+    r"So (we have|we get)",  # Common reasoning continuations
+    r"For (the|each|every)",  # Common phrase structure
+    r"Let's (calculate|find|compute)",  # Common approach phrases
+    r"(Cost|Price|Amount|Value) of",  # Common terms in word problems
+    r"(There are|There is)",  # Common sentence starters
+    r"If .* then",  # Conditional statements
+    r"(Since|Because|Thus)",  # Common logical connectors
+    r"(Original|Initial|Final) (price|cost|value)",  # Common value references
 ]
 
 """

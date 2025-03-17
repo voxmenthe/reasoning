@@ -29,8 +29,8 @@ Negative rewards (penalties) can reduce the total significantly:
 """
 
 # Anti-repetition scaling factor - reduces the overwhelming penalty
-ANTI_REPETITION_SCALE = 0.075  # Scale down the anti-repetition penalty
-MAX_ANTI_REPETITION_PENALTY =  -9.0 # float('-inf') # Cap the maximum anti-repetition penalty
+ANTI_REPETITION_SCALE = 0.01  # Scale down the anti-repetition penalty (reduced from 0.075)
+MAX_ANTI_REPETITION_PENALTY = -1.0  # Cap the maximum anti-repetition penalty (less aggressive than -9.0)
 
 # Core reward weights
 CORRECTNESS_REWARD = 4.00  # Primary objective - correct answer
