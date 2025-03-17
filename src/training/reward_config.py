@@ -28,21 +28,6 @@ Negative rewards (penalties) can reduce the total significantly:
   - Topic drift penalty: -0.5 per topic change
 """
 
-from src.training.reward_config import (
-    CORRECTNESS_REWARD,
-    INTEGER_REWARD,
-    STRICT_FORMAT_REWARD,
-    SOFT_FORMAT_REWARD,
-    XML_TAG_WEIGHTS,
-    REPETITION_PENALTIES,
-    TRAILING_CONTENT_PENALTY,
-    REPETITION_SETTINGS,
-    TOPIC_SETTINGS,
-    TOPIC_PENALTIES,
-    ANTI_REPETITION_SCALE,
-    MAX_ANTI_REPETITION_PENALTY,
-    REPETITION_CONTEXT
-)
 
 # Anti-repetition scaling factor - reduces the overwhelming penalty
 ANTI_REPETITION_SCALE = 0.06  # Scale down the anti-repetition penalty (reduced from 0.075)

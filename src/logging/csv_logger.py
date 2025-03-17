@@ -56,7 +56,7 @@ class CSVLogger:
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         
         # For safe shutdown
-        self._shutdown = False
+        self.shutdown = False
     
     def log_generation(self, data_dict: Dict[str, Any]):
         """Add a generation record to the CSV queue.
@@ -77,7 +77,7 @@ class CSVLogger:
     
     def _worker(self):
         """Background thread that processes the queue and writes to CSV."""
-        while not self._shutdown:
+        while not self.shutdown:
             # Batch process for efficiency
             batch = []
             try:
@@ -154,7 +154,7 @@ class CSVLogger:
     def shutdown(self):
         """Shutdown the worker thread after flushing the queue."""
         # Signal shutdown
-        self._shutdown = True
+        self.shutdown = True
         
         # Wait for queue to be processed
         self.flush()
