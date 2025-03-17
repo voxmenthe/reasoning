@@ -21,7 +21,8 @@ regex = "^2023.10.3"
 nltk = "^3.8.1"
 scikit-learn = "^1.4.0"
 bitsandbytes = "^0.42.0"
-tensorboard = "*"
+tensorboard = "^2.19.0"
+standard-imghdr = "^3.13.0"
 peft = {git = "https://github.com/huggingface/peft.git"}
 transformers = {git = "https://github.com/huggingface/transformers.git", rev = "v4.49.0-Gemma-3"}
 trl = {git = "https://github.com/huggingface/trl.git", branch = "main"}

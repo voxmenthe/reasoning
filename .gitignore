@@ -52,3 +52,4 @@ poetry.lock
 logs/
 optimized_gemma3_gemma-3-1b-it/
 dataset_cache/
+checkpoints/

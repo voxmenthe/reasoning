@@ -29,11 +29,11 @@ Negative rewards (penalties) can reduce the total significantly:
 """
 
 # Anti-repetition scaling factor - reduces the overwhelming penalty
-ANTI_REPETITION_SCALE = 1 # 0.005  # Scale down the anti-repetition penalty
-MAX_ANTI_REPETITION_PENALTY = float('-inf') # -10.0  # Cap the maximum anti-repetition penalty
+ANTI_REPETITION_SCALE = 0.005  # Scale down the anti-repetition penalty
+MAX_ANTI_REPETITION_PENALTY =  -8.0 # float('-inf') # Cap the maximum anti-repetition penalty
 
 # Core reward weights
-CORRECTNESS_REWARD = 2.75  # Primary objective - correct answer
+CORRECTNESS_REWARD = 3.75  # Primary objective - correct answer
 INTEGER_REWARD = 0.5      # Reward for providing numeric answer
 STRICT_FORMAT_REWARD = 0.6  # Perfect formatting with newlines
 SOFT_FORMAT_REWARD = 0.5    # Basic XML structure present
@@ -61,14 +61,15 @@ REPETITION_PENALTIES = {
 
 # Repetition detection settings
 REPETITION_SETTINGS = {
-    "min_word_length": 4,         # Minimum length for a word to be considered in repetition checks
+    "min_word_length": 2,         # Minimum length for a word to be considered in repetition checks
     "min_repeats": 3,            # Minimum number of repetitions to trigger penalty
     "max_word_gap": 2,           # Maximum number of words between repetitions to be considered repetitive
     "phrase_min_words": 3,       # Minimum words to consider as a phrase
     "max_phrase_length": 50,     # Maximum characters in a phrase to check for repetition
     "supported_scripts": [        # Scripts to check for mixed-script repetition
         "Latin", "Devanagari", "Thai", "Arabic", "Cyrillic", 
-        "Han", "Hiragana", "Katakana", "Hangul"
+        "Han", "Hiragana", "Katakana", "Hangul", 
+        "Tamil", "Telugu", "Kannada", "Malayalam"
     ],
     # New settings for legitimate multilingual content
     "max_script_changes_per_sentence": 3,  # Allow up to 3 script changes per sentence before penalizing

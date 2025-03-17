@@ -348,7 +348,7 @@ class OptimizedGRPOTrainer(GRPOTrainer):
             
         return result
     
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         # Store current batch information for the callback
         if hasattr(inputs, 'questions'):
             self.current_batch_info = {
@@ -357,7 +357,7 @@ class OptimizedGRPOTrainer(GRPOTrainer):
                 'model_outputs': None  # Will be populated after generation
             }
             
-        # Call the parent method
+        # Call the parent method - omit num_items_in_batch since parent GRPOTrainer doesn't expect it
         result = super().compute_loss(model, inputs, return_outputs)
         
         # Update with model outputs if available
@@ -404,8 +404,8 @@ def train_model():
     logger.info(f"- Total steps: {total_steps}")
     
     # Configure sequence lengths
-    max_prompt_length = 1024
-    max_seq_length = 2048
+    max_prompt_length = 1536 # 1024
+    max_seq_length = 4096 # 2048
     
     # Configure training arguments with MPS-compatible optimizer
     # Replace "hybrid" cache with "memory" for better performance
