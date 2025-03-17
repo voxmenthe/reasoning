@@ -10,9 +10,9 @@ def test_imports():
     # Import test will fail if any of these imports fail
     try:
         # Attempt to import key modules - adjust based on your actual modules
-        import rewards
-        import reward_config
-        import reasoning_dataset
+        import src.training.rewards
+        import src.training.reward_config
+        import src.datasets.reasoning_dataset
         
         # If we get here, imports succeeded
         assert True

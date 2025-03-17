@@ -97,24 +97,3 @@ TOPIC_PENALTIES = {
 
 # Content after closing tag penalty
 TRAILING_CONTENT_PENALTY = 0.001  # Per character after final tag 
-
-# Reward function configuration
-from rewards import (
-    xmlcount_reward_func,
-    soft_format_reward_func,
-    strict_format_reward_func,
-    int_reward_func,
-    correctness_reward_func,
-    anti_repetition_reward_func,
-    topic_relevance_reward_func
-)
-
-REWARD_FUNCTIONS = [
-    xmlcount_reward_func,
-    soft_format_reward_func,
-    strict_format_reward_func,
-    int_reward_func,
-    correctness_reward_func,
-    anti_repetition_reward_func,
-    topic_relevance_reward_func,
-] 

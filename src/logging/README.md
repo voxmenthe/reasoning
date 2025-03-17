@@ -1,110 +1,151 @@
-# Gemma Training Logging System
+# Centralized Logging System for Gemma Training
 
-This module provides a centralized logging system for Gemma training scripts. It offers a unified interface for logging different types of information, with configurable handlers and formatters.
+A comprehensive, modular logging system for ML training that provides:
 
-## Features
+- Unified configuration via YAML files
+- Consistent log formats across components
+- Background thread processing for non-blocking CSV logging
+- TensorBoard integration for metrics visualization
+- Detailed reward function tracking
+- Model output capture and analysis
+- Resource usage monitoring
 
-- **Unified API**: Consistent interface for all logging needs
-- **Configurable**: YAML-based configuration system
-- **Asynchronous Logging**: Background thread processing for high-frequency events
-- **Multiple Output Formats**: Console, File, CSV, and TensorBoard
-- **Model Metrics**: Specialized logging for GRPO/RL training metrics
-- **Validation**: Periodic evaluation on held-out data
+## Key Components
 
-## Usage
+- **Configuration System**: YAML-based config for all logging settings
+- **Core Logger Types**:
+  - `training`: Training progress and high-level metrics
+  - `model`: Model outputs and generations
+  - `reward`: Reward function values and metrics
+  - `system`: System and resource usage information
+  - `metrics`: Detailed performance metrics
+- **Custom Handlers**:
+  - `CSVHandler`: Background thread-based CSV logging
+  - `TensorBoardHandler`: Metrics visualization
+- **Metrics Collection**:
+  - Reward metrics tracking
+  - Generation quality metrics
+  - Resource usage metrics
 
-### Basic Initialization
+## Using the Logging System
+
+### 1. Initialize the System
 
 ```python
-from src.logging import initialize, get_training_logger
+from src.logging import initialize as init_logging
 
-# Initialize with default configuration
-initialize()
-
-# Get a logger
-logger = get_training_logger()
-logger.info("Training started")
+# Initialize with a configuration file
+init_logging("src/logging/config/gemma_logging_config.yaml")
 ```
 
-### Logging Model Outputs
+### 2. Get Specific Loggers
 
 ```python
+from src.logging import (
+    get_training_logger,
+    get_model_logger,
+    get_reward_logger,
+    get_metrics_logger
+)
+
+# Get specific loggers for different components
+training_logger = get_training_logger()
+model_logger = get_model_logger()
+```
+
+### 3. Log Messages and Data
+
+```python
+# Standard logging
+training_logger.info("Starting training run")
+training_logger.warning("Learning rate may be too high")
+
+# Log model outputs
 from src.logging import log_model_output
 
 log_model_output(
     question="What is 2+2?",
     true_answer="4",
-    model_output="<reasoning>2+2=4</reasoning>\n<answer>4</answer>",
-    reasoning="2+2=4"
+    model_output="<reasoning>\n2+2=4\n</reasoning>\n<answer>\n4\n</answer>",
+    reasoning="2+2=4",
+    answer="4"
 )
-```
 
-### Logging Rewards
-
-```python
-from src.logging import log_reward
-
-log_reward(
-    reward_name="correctness_reward",
-    values=[1.0, 0.0, 1.0],
-    samples=["sample1", "sample2", "sample3"]
-)
-```
-
-### Logging Training Progress
-
-```python
+# Log metrics
 from src.logging import log_training_progress
 
 log_training_progress(
-    step=current_step,
+    step=100,
     metrics={
-        "loss": current_loss,
-        "accuracy": current_accuracy,
-        "learning_rate": current_lr
+        "loss": 0.5,
+        "accuracy": 85.2,
+        "learning_rate": 5e-6
     }
 )
 ```
 
-### Logging Advanced Metrics
+### 4. Track Resources
 
 ```python
-from src.logging import log_reward_metrics, log_generation_metrics
+from src.logging import log_memory_usage
 
-# Log reward metrics with trend analysis
-log_reward_metrics(
-    step=current_step,
-    rewards_dict={
-        "correctness_reward": batch_correctness_rewards,
-        "anti_repetition_reward": batch_anti_repetition_rewards,
-        "topic_relevance_reward": batch_topic_relevance_rewards
-    }
-)
-
-# Log generation diversity metrics
-log_generation_metrics(
-    step=current_step,
-    generations=batch_generations
-)
+# Log memory usage
+log_memory_usage()
 ```
 
-### Running Validation
+### 5. Log Reward Function Metrics
 
 ```python
-from src.logging import run_validation
+from src.logging import log_reward_metrics
 
-run_validation(
-    step=current_step,
-    model=model,
-    tokenizer=tokenizer
+rewards_dict = {
+    "correctness_reward_func": [2.0, 0.0, 2.0],
+    "format_reward_func": [0.5, 0.5, 0.5]
+}
+
+log_reward_metrics(step=100, rewards_dict=rewards_dict)
+```
+
+## Integration with Gemma Training Scripts
+
+The logging system has been integrated with both the standard and optimized Gemma training scripts:
+
+### Standard Script (`new_gemma_training.py`)
+
+- Uses the `EnhancedLoggingCallback` for tracking training progress
+- Replaces print statements with structured logging
+- Captures model outputs in standard format
+
+### Optimized Script (`optimized_gemma_training.py`)
+
+- Uses the `OptimizedLoggingCallback` with reduced logging frequency
+- Implements background threading for non-blocking logging
+- Provides memory-efficient CSV and metrics tracking
+
+### Reward Function Integration
+
+The logging system wraps reward functions to automatically capture detailed metrics:
+
+```python
+# Get wrapped versions of original reward functions
+from src.training.wrapped_rewards import get_wrapped_reward_functions
+
+wrapped_reward_functions = get_wrapped_reward_functions(REWARD_FUNCTIONS)
+
+# Use in trainer
+trainer = GRPOTrainer(
+    # ...
+    reward_funcs=wrapped_reward_functions,
+    # ...
 )
 ```
 
 ## Configuration
 
-The logging system can be configured using a YAML file. Here's a basic example:
+### Sample Configuration File
 
 ```yaml
+# src/logging/config/gemma_logging_config.yaml
 version: 1
 disable_existing_loggers: false
 
@@ -115,7 +156,10 @@ root:
 loggers:
   logging.training:
     level: INFO
-    handlers: [console, file]
+    handlers: [console, file, tensorboard]
+    propagate: false
+  
+  # ... other loggers ...
 
 handlers:
   console:
@@ -123,70 +167,49 @@ handlers:
     formatter: standard
     level: INFO
     
-  file:
-    class: logging.handlers.RotatingFileHandler
-    formatter: standard
-    filename: logs/training.log
-    maxBytes: 10485760  # 10MB
-    backupCount: 5
+  # ... other handlers ...
 
-formatters:
-  standard:
-    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    datefmt: "%Y-%m-%d %H:%M:%S"
+# Model evaluation metrics configuration
+metrics:
+  logging_frequency: 5
+  validation_frequency: 250
+  # ... additional settings ...
 ```
 
-To use a custom configuration:
+## Analyzing Logs
 
-```python
-from src.logging import initialize
+### Available Output Formats
 
-initialize("path/to/custom_config.yaml")
+1. **Console Output**: Real-time progress and critical messages
+2. **Log Files**: Detailed logs in `logs/gemma_training.log`
+3. **CSV Data**: Model outputs in `logs/gemma_outputs.csv`
+4. **TensorBoard**: Visualize metrics in `logs/gemma_tensorboard/`
+
+### TensorBoard Visualization
+
+Launch TensorBoard to visualize metrics:
+
+```bash
+tensorboard --logdir=logs/gemma_tensorboard
 ```
 
-## Directory Structure
+This will show:
+- Training loss curves
+- Reward function values
+- Model accuracy
+- Resource usage
+- Generation quality metrics
 
-```
-/logging/
-  __init__.py           # Exposes public API
-  config.py             # Configuration handling
-  metrics.py            # Model evaluation metrics
-  validation.py         # Periodic validation runner
-  example.py            # Usage example
-  README.md             # This file
-  handlers/
-    __init__.py
-    csv_handler.py      # CSV logging
-    tensorboard_handler.py  # TensorBoard integration
-  formatters/
-    __init__.py
-    json_formatter.py   # JSON formatter
-  config/
-    default_logging_config.yaml  # Default configuration
-```
+## Performance Considerations
 
-## Custom Handlers
+The logging system is designed for minimal training impact:
 
-The system includes several custom handlers:
+- Background thread processing for CSV logging
+- Configurable logging frequency
+- Buffered metrics collection
+- Memory-efficient handlers
 
-- **CSVHandler**: Writes model outputs to CSV files asynchronously
-- **TensorBoardHandler**: Logs metrics to TensorBoard for visualization
-
-These are automatically configured when specified in the YAML configuration file.
-
-## Metrics and Validation
-
-The system provides specialized support for:
-
-- **Reward Tracking**: Statistics for reward functions over time
-- **Generation Metrics**: Diversity, format adherence, etc.
-- **Validation**: Periodic evaluation on held-out data
-
-These metrics are designed specifically for GRPO/RL-style training where traditional loss metrics may not be informative.
-
-## Requirements
-
-- Python 3.6+
-- PyYAML
-- TensorBoard (optional, for visualization)
-- NumPy (for metrics calculation) 
+For maximum performance:
+- Reduce `logging_frequency` in the config
+- Set appropriate `buffer_size` values
+- Disable detailed metrics during production runs 

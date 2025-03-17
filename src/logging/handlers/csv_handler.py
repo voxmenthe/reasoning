@@ -55,14 +55,14 @@ class CSVHandler(logging.Handler):
         os.makedirs(os.path.dirname(self.filename), exist_ok=True)
         
         # Queue for log records
-        self.queue: queue.Queue = queue.Queue()
+        self.queue = queue.Queue()
+        
+        # Flag for thread control - must be created before starting the thread
+        self._shutdown = threading.Event()
         
         # Thread for background processing
         self.thread = threading.Thread(target=self._process_queue, daemon=True)
         self.thread.start()
-        
-        # Flag for thread control
-        self._shutdown = threading.Event()
         
         # Keep track of file existence to handle headers correctly
         self._file_exists = os.path.exists(self.filename) and os.path.getsize(self.filename) > 0
@@ -170,7 +170,7 @@ class CSVHandler(logging.Handler):
     def close(self) -> None:
         """Close the handler and flush all buffered data."""
         with self.lock:
-            if self._shutdown.is_set():
+            if not hasattr(self, '_shutdown') or self._shutdown.is_set():
                 return
                 
             self._shutdown.set()

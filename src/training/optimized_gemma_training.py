@@ -11,11 +11,12 @@
 # - Reduced callback frequency with background threading for CSV saving
 # - Memory-efficient caching implementation
 # - Efficient checkpointing for resuming interrupted training
+# - Integrated centralized logging system
 
 import os
+from src.training.rewards import xmlcount_reward_func, soft_format_reward_func, strict_format_reward_func, int_reward_func, correctness_reward_func, anti_repetition_reward_func, topic_relevance_reward_func
 import torch
 import warnings
-import logging
 import threading
 import queue
 import time
@@ -31,19 +32,40 @@ import numpy as np
 from datasets import Dataset, load_from_disk
 import functools
 
-# Import reward functions configuration
-from reward_config import REWARD_FUNCTIONS
-
-# Set up logging with less frequent file updates
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("training_process.log", mode='a'),
-        logging.StreamHandler()
-    ]
+# Import our centralized logging system
+from src.logging import (
+    initialize as init_logging,
+    get_training_logger,
+    get_model_logger,
+    get_reward_logger,
+    get_metrics_logger,
+    log_model_output,
+    log_reward,
+    log_training_progress,
+    log_memory_usage,
+    log_reward_metrics,
+    log_generation_metrics
 )
-logger = logging.getLogger(__name__)
+
+# Import our custom callback
+from src.training.optimized_logging_callback import OptimizedLoggingCallback
+from src.training.wrapped_rewards import get_wrapped_reward_functions
+
+# reward functions configuration
+REWARD_FUNCTIONS = [
+    xmlcount_reward_func,
+    soft_format_reward_func,
+    strict_format_reward_func,
+    int_reward_func,
+    correctness_reward_func,
+    anti_repetition_reward_func,
+    topic_relevance_reward_func,
+] 
+
+# Initialize the logging system with Gemma-specific configuration
+init_logging("src/logging/config/gemma_logging_config.yaml")
+logger = get_training_logger()
+system_logger = get_metrics_logger()
 
 # Import dataset functions from separate module
 from src.datasets.reasoning_dataset import (
@@ -57,104 +79,57 @@ os.environ["HUGGING_FACE_HUB_TOKEN"] = all_creds['HUGGINGFACE_ACCESS_TOKEN_Gemma
 
 # Check for MPS (Apple Silicon) availability
 is_mps_available = torch.backends.mps.is_available()
-print(f"MPS (Apple Silicon GPU) available: {is_mps_available}")
+logger.info(f"MPS (Apple Silicon GPU) available: {is_mps_available}")
 
 # Set device and data type
 if is_mps_available:
     device = torch.device("mps")
-    print("Using MPS device for training")
+    logger.info("Using MPS device for training")
     
     # Track initial memory usage on MPS
     initial_memory = torch.mps.current_allocated_memory() / (1024 * 1024)
-    print(f"Initial MPS memory usage: {initial_memory:.2f} MB")
+    logger.info(f"Initial MPS memory usage: {initial_memory:.2f} MB")
+    log_memory_usage()  # Call without arguments
 else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using {device} device for training")
+    logger.info(f"Using {device} device for training")
 
 # Set dtype - bfloat16 is supported on Apple Silicon M2+ chips
 torch_dtype = torch.bfloat16
 
 # Constants and configuration
 # --------------------------------------------------------------------------
-MODEL_NAME = "google/gemma-3-4b-it"  # "google/gemma-3-1b-it"
+MODEL_NAME = "google/gemma-3-1b-it" # "google/gemma-3-4b-it"  # 
 DATASET_CACHE_PATH = "./dataset_cache"
 CHECKPOINT_DIR = "./checkpoints"
-TENSORBOARD_DIR = "./tensorboard_logs"
-CSV_OUTPUT_DIR = "./training_outputs"
+TENSORBOARD_DIR = "./logs/gemma_tensorboard"  # Updated to match logging config
+CSV_OUTPUT_DIR = "./logs"  # Updated to match logging config
 
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 os.makedirs(TENSORBOARD_DIR, exist_ok=True)
 os.makedirs(CSV_OUTPUT_DIR, exist_ok=True)
 
-# Background thread for saving CSV data
+# Extract reasoning and answer (moved from callback to function section)
 # --------------------------------------------------------------------------
-class CSVSaverThread(threading.Thread):
-    def __init__(self, save_path, flush_interval=10):
-        """
-        Initialize the CSV saver thread
-        
-        Args:
-            save_path: Path where CSV will be saved
-            flush_interval: How often to check for new data (seconds)
-        """
-        super().__init__(daemon=True)
-        self.save_path = save_path
-        self.flush_interval = flush_interval
-        self.data_queue = queue.Queue()
-        self.running = True
-        
-    def add_data(self, data_list):
-        """Add data to be saved in background"""
-        if data_list:
-            self.data_queue.put(data_list)
+def extract_reasoning_and_answer(text):
+    """
+    Extract reasoning and answer from model output using the XML format tags
+    Returns tuple of (reasoning, answer)
+    """
+    reasoning = ""
+    answer = ""
     
-    def run(self):
-        """Main thread execution loop"""
-        while self.running:
-            try:
-                # Check if there's data to save, with timeout
-                try:
-                    data_to_save = self.data_queue.get(timeout=self.flush_interval)
-                    self._save_to_csv(data_to_save)
-                    self.data_queue.task_done()
-                except queue.Empty:
-                    # No data to save, continue waiting
-                    pass
-                    
-            except Exception as e:
-                logger.error(f"Error in CSV saver thread: {str(e)}")
-                # Continue running despite errors
-                
-    def stop(self):
-        """Stop the thread and save any remaining data"""
-        self.running = False
-        
-        # Save any remaining items in the queue
-        remaining_items = []
-        while not self.data_queue.empty():
-            remaining_items.extend(self.data_queue.get())
-            self.data_queue.task_done()
-            
-        if remaining_items:
-            self._save_to_csv(remaining_items)
-            
-    def _save_to_csv(self, data_list):
-        """Save data to CSV file"""
-        if not data_list:
-            return
-            
-        try:
-            # Convert to DataFrame
-            df = pd.DataFrame(data_list)
-            
-            # If file exists, append without headers
-            if os.path.exists(self.save_path) and os.path.getsize(self.save_path) > 0:
-                df.to_csv(self.save_path, mode='a', header=False, index=False)
-            else:
-                df.to_csv(self.save_path, index=False)
-                
-        except Exception as e:
-            logger.error(f"Error saving CSV: {str(e)}")
+    # Extract reasoning
+    reasoning_match = re.search(r'<reasoning>(.*?)</reasoning>', text, re.DOTALL)
+    if reasoning_match:
+        reasoning = reasoning_match.group(1).strip()
+    
+    # Extract answer
+    answer_match = re.search(r'<answer>(.*?)</answer>', text, re.DOTALL)
+    if answer_match:
+        answer = answer_match.group(1).strip()
+    
+    return reasoning, answer
 
 # Dataset preparation with caching
 # --------------------------------------------------------------------------
@@ -170,10 +145,10 @@ def prepare_cached_dataset(force_rebuild=False):
     """
     # Check if cached dataset exists
     if not force_rebuild and os.path.exists(DATASET_CACHE_PATH):
-        print(f"Loading cached dataset from {DATASET_CACHE_PATH}")
+        logger.info(f"Loading cached dataset from {DATASET_CACHE_PATH}")
         return load_from_disk(DATASET_CACHE_PATH)
     
-    print("Building and caching dataset...")
+    logger.info("Building and caching dataset...")
     
     # Get raw dataset
     raw_dataset = get_gsm8k_questions()
@@ -210,7 +185,7 @@ def prepare_cached_dataset(force_rebuild=False):
     # Save to disk
     dataset.save_to_disk(DATASET_CACHE_PATH)
     
-    print(f"Dataset cached to {DATASET_CACHE_PATH}")
+    logger.info(f"Dataset cached to {DATASET_CACHE_PATH}")
     return dataset
 
 # Model and tokenizer initialization
@@ -222,7 +197,7 @@ def load_compiled_model():
     Returns:
         Compiled model with LoRA adapters
     """
-    print("Loading base model...")
+    logger.info("Loading base model...")
     # Load model without dtype to avoid compatibility issues
     model = Gemma3ForCausalLM.from_pretrained(
         pretrained_model_name_or_path=MODEL_NAME,
@@ -230,14 +205,14 @@ def load_compiled_model():
     )
     
     # Convert to dtype and move to device
-    print(f"Converting model to {torch_dtype} and moving to {device}...")
+    logger.info(f"Converting model to {torch_dtype} and moving to {device}...")
     model = model.to(device=device, dtype=torch_dtype)
     
     # Enable gradient checkpointing for memory efficiency before compilation
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': True})
     
     # Configure LoRA
-    print("Configuring LoRA adapters...")
+    logger.info("Configuring LoRA adapters...")
     peft_config = LoraConfig(
         lora_alpha=16,
         lora_dropout=0.05,
@@ -253,41 +228,19 @@ def load_compiled_model():
     
     # Apply LoRA adapters
     model = get_peft_model(model, peft_config)
-    print(model.print_trainable_parameters())
+    logger.info(model.print_trainable_parameters())
     
     # Disable cache during training to ensure gradient flow
     model.config.use_cache = False
     
     # Compile the model with torch.compile() for better performance
     # Use mode='reduce-overhead' which works well with training
-    print("Compiling model with torch.compile()...")
+    logger.info("Compiling model with torch.compile()...")
     # Only apply torch.compile when not on MPS as it might not be fully supported
     if device.type != 'mps':
         model = torch.compile(model, mode='reduce-overhead')
     
     return model
-
-# Function to extract reasoning and answer
-# --------------------------------------------------------------------------
-def extract_reasoning_and_answer(text):
-    """
-    Extract reasoning and answer from model output using the XML format tags
-    Returns tuple of (reasoning, answer)
-    """
-    reasoning = ""
-    answer = ""
-    
-    # Extract reasoning
-    reasoning_match = re.search(r'<reasoning>(.*?)</reasoning>', text, re.DOTALL)
-    if reasoning_match:
-        reasoning = reasoning_match.group(1).strip()
-    
-    # Extract answer
-    answer_match = re.search(r'<answer>(.*?)</answer>', text, re.DOTALL)
-    if answer_match:
-        answer = answer_match.group(1).strip()
-    
-    return reasoning, answer
 
 # Optimized trainer with checkpointing
 # --------------------------------------------------------------------------
@@ -413,133 +366,6 @@ class OptimizedGRPOTrainer(GRPOTrainer):
             
         return result
 
-# Optimized callback with reduced frequency and background processing
-# --------------------------------------------------------------------------
-class OptimizedOutputCallback(TrainerCallback):
-    def __init__(self, checkpoint_dir=None):
-        self.log_counter = 0
-        self.total_answers = 0
-        self.correct_answers = 0
-        
-        # Set up CSV tracking with background thread
-        self.csv_path = os.path.join(CSV_OUTPUT_DIR, "training_outputs.csv")
-        self.csv_save_frequency = 50  # Save every 50 steps
-        self.training_data_buffer = []
-        
-        # Create background thread for CSV saving
-        self.csv_thread = CSVSaverThread(self.csv_path)
-        self.csv_thread.start()
-        
-        # Create CSV with headers if it doesn't exist
-        if not os.path.exists(self.csv_path):
-            with open(self.csv_path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['question', 'answer', 'llm_reasoning', 'llm_answer'])
-                
-        # For checkpointing (if provided)
-        self.checkpoint_dir = checkpoint_dir
-    
-    def on_init_end(self, args, state, control, **kwargs):
-        logger.info("Training initialization completed")
-        print(f"\nTraining progress: 0/{args.max_steps} steps (0.0%) | Correct: 0/0 (0.0%)")
-        return control
-        
-    def on_step_end(self, args, state, control, logs=None, model=None, tokenizer=None, **kwargs):
-        self.log_counter += 1
-        
-        # Update correct answers counter if available in logs
-        if logs and 'rewards/correctness_reward_func' in logs:
-            # Each step processes batch_size * num_generations examples
-            batch_size = args.per_device_train_batch_size
-            num_generations = args.num_generations
-            examples_this_step = batch_size * num_generations
-            
-            self.total_answers += examples_this_step
-            
-            # Check for correctness based on non-zero reward
-            # The reward value indicates how many were correct in this batch
-            from reward_config import CORRECTNESS_REWARD
-            correct_value = logs['rewards/correctness_reward_func']
-            
-            # If the reward is for the whole batch, divide by CORRECTNESS_REWARD to get count
-            if correct_value > 0:
-                correct_count = int(round(correct_value / CORRECTNESS_REWARD))
-                self.correct_answers += correct_count
-        
-        # Process training outputs with REDUCED FREQUENCY (every 10 steps)
-        if hasattr(kwargs.get('trainer', None), 'current_batch_info') and self.log_counter % 10 == 0:
-            try:
-                batch_info = kwargs['trainer'].current_batch_info
-                
-                # Extract questions, true answers, model generations
-                questions = batch_info.get('questions', [])
-                true_answers = batch_info.get('true_answers', [])
-                model_outputs = batch_info.get('model_outputs', [])
-                
-                # Process each example in the batch
-                for i in range(len(questions)):
-                    if i < len(questions) and i < len(true_answers) and i < len(model_outputs):
-                        question = questions[i]
-                        true_answer = true_answers[i]
-                        model_output = model_outputs[i]
-                        
-                        # Extract reasoning and answer from model output
-                        llm_reasoning, llm_answer = extract_reasoning_and_answer(model_output)
-                        
-                        # Store data in buffer
-                        self.training_data_buffer.append({
-                            'question': question,
-                            'answer': true_answer,
-                            'llm_reasoning': llm_reasoning,
-                            'llm_answer': llm_answer
-                        })
-            except Exception as e:
-                logger.warning(f"Error capturing training data: {str(e)}")
-        
-        # Calculate accuracy percentage
-        accuracy = 0.0
-        if self.total_answers > 0:
-            accuracy = (self.correct_answers / self.total_answers) * 100
-            
-        # Print lightweight progress to stdout every 5 steps
-        if self.log_counter % 5 == 0:
-            progress_pct = (state.global_step / args.max_steps) * 100
-            print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps ({progress_pct:.1f}%) | Correct: {self.correct_answers}/{self.total_answers} ({accuracy:.1f}%)", end="", flush=True)
-        
-        # Save CSV periodically by sending to background thread
-        if self.log_counter % self.csv_save_frequency == 0 and self.training_data_buffer:
-            self.csv_thread.add_data(self.training_data_buffer)
-            self.training_data_buffer = []  # Clear buffer after sending to thread
-        
-        # Log metrics less frequently (every 20 steps)
-        if self.log_counter % 20 == 0 and logs:
-            if 'loss' in logs:
-                logger.info(f"Step {state.global_step}: Loss: {logs['loss']:.6f}")
-            if 'rewards/correctness_reward_func' in logs:
-                logger.info(f"Step {state.global_step}: Correctness reward: {logs['rewards/correctness_reward_func']:.6f}")
-            logger.info(f"Step {state.global_step}: Accuracy so far: {self.correct_answers}/{self.total_answers} ({accuracy:.2f}%)")
-        
-        return control
-
-    def on_train_end(self, args, state, control, **kwargs):
-        # Print final progress and add a newline
-        accuracy = 0.0
-        if self.total_answers > 0:
-            accuracy = (self.correct_answers / self.total_answers) * 100
-            
-        print(f"\rTraining progress: {state.global_step}/{args.max_steps} steps (100.0%) | Correct: {self.correct_answers}/{self.total_answers} ({accuracy:.1f}%)")
-        print("\nTraining completed!")
-        
-        # Save any remaining data and stop the thread
-        if self.training_data_buffer:
-            self.csv_thread.add_data(self.training_data_buffer)
-        self.csv_thread.stop()
-        self.csv_thread.join(timeout=10)  # Wait up to 10 seconds for thread to finish
-        
-        logger.info(f"Final accuracy: {self.correct_answers}/{self.total_answers} ({accuracy:.2f}%)")
-        logger.info("Training completed")
-        return control
-
 # Main training function
 # --------------------------------------------------------------------------
 def train_model():
@@ -547,7 +373,7 @@ def train_model():
     # Prepare cached dataset
     dataset = prepare_cached_dataset(force_rebuild=False)
     dataset_size = len(dataset)
-    print(f"Dataset size: {dataset_size} examples")
+    logger.info(f"Dataset size: {dataset_size} examples")
     
     # Load and compile model
     model = load_compiled_model()
@@ -571,11 +397,11 @@ def train_model():
     steps_per_epoch = dataset_size // effective_batch_size
     total_steps = steps_per_epoch * num_epochs
     
-    print(f"\nTraining configuration:")
-    print(f"- Number of epochs: {num_epochs}")
-    print(f"- Effective batch size: {effective_batch_size}")
-    print(f"- Steps per epoch: {steps_per_epoch}")
-    print(f"- Total steps: {total_steps}")
+    logger.info("\nTraining configuration:")
+    logger.info(f"- Number of epochs: {num_epochs}")
+    logger.info(f"- Effective batch size: {effective_batch_size}")
+    logger.info(f"- Steps per epoch: {steps_per_epoch}")
+    logger.info(f"- Total steps: {total_steps}")
     
     # Configure sequence lengths
     max_prompt_length = 1024
@@ -612,8 +438,8 @@ def train_model():
         # Enable TensorBoard reporting
         report_to="tensorboard",
         
-        # Replace "hybrid" cache with "memory" for better performance
-        cache_implementation="memory",
+        # Replace "hybrid" cache with something else for better performance?
+        cache_implementation="hybrid",
         
         # Enable gradient checkpointing in trainer arguments
         gradient_checkpointing=True,
@@ -622,15 +448,18 @@ def train_model():
         output_dir=f"./optimized_gemma3_{MODEL_NAME.split('/')[-1]}"
     )
     
+    # Get wrapped reward functions for logging
+    wrapped_reward_functions = get_wrapped_reward_functions(REWARD_FUNCTIONS)
+    
     # Initialize optimized trainer with checkpointing
-    print("Initializing optimized GRPO trainer...")
+    logger.info("Initializing optimized GRPO trainer...")
     trainer = OptimizedGRPOTrainer(
         model=model,
         processing_class=processor,
-        reward_funcs=REWARD_FUNCTIONS,
+        reward_funcs=wrapped_reward_functions,  # Use wrapped reward functions
         args=training_args,
         train_dataset=dataset,
-        callbacks=[OptimizedOutputCallback()],
+        callbacks=[OptimizedLoggingCallback(checkpoint_dir=CHECKPOINT_DIR)],  # Use our new callback
         
         # Add checkpoint directory for resumable training
         checkpoint_dir=CHECKPOINT_DIR,
@@ -638,28 +467,27 @@ def train_model():
     )
     
     # Start training
-    print("Starting training...")
+    logger.info("Starting training...")
     trainer_output = trainer.train()
-    print(f"Training completed in {trainer_output.metrics['train_runtime']:.2f} seconds")
+    logger.info(f"Training completed in {trainer_output.metrics['train_runtime']:.2f} seconds")
     
     # Save model
     output_dir = f"./optimized_gemma3_{MODEL_NAME.split('/')[-1]}_final"
     adapter_output_dir = f"./optimized_gemma3_{MODEL_NAME.split('/')[-1]}_peft_adapters"
     
-    print(f"Saving full model to {output_dir}")
+    logger.info(f"Saving full model to {output_dir}")
     trainer.save_model(output_dir)
     
     # Save PEFT adapters separately for easier loading
-    print(f"Saving PEFT adapters to {adapter_output_dir}")
+    logger.info(f"Saving PEFT adapters to {adapter_output_dir}")
     trainer.model.save_pretrained(adapter_output_dir)
     
     # Track final memory usage on MPS
     if is_mps_available:
         try:
-            final_memory = torch.mps.current_allocated_memory() / (1024 * 1024)
-            print(f"Final MPS memory usage: {final_memory:.2f} MB")
+            log_memory_usage()
         except Exception as e:
-            print("Unable to track MPS memory usage")
+            logger.warning("Unable to track MPS memory usage")
             
     return trainer, processor
 
@@ -672,7 +500,7 @@ def test_model(model, tokenizer, questions=None):
             "The school principal decided that she wanted every class to have an equal number of boys and girls in each first-grade classroom. There are 4 classrooms. There are 56 boys and 44 girls. How many total students are in each classroom?"
         ]
     
-    print("\nTesting trained model:")
+    logger.info("\nTesting trained model:")
     
     # Generate text function
     def generate_text(prompt, max_new_tokens=1024):
@@ -694,26 +522,48 @@ def test_model(model, tokenizer, questions=None):
         return tokenizer.decode(outputs[0], skip_special_tokens=True)
     
     # Test on each question
+    test_results = []
     for i, question in enumerate(questions):
-        print(f"\nQuestion {i+1}: {question}")
+        logger.info(f"\nQuestion {i+1}: {question}")
         output = generate_text(question)
-        print("\nModel output:")
-        print(output)
+        logger.info("\nModel output:")
+        logger.info(output)
         
         # Extract reasoning and answer
         reasoning, answer = extract_reasoning_and_answer(output)
-        print("\nExtracted reasoning:", reasoning)
-        print("Extracted answer:", answer)
+        logger.info("\nExtracted reasoning: " + reasoning)
+        logger.info("Extracted answer: " + answer)
+        
+        # Store results
+        test_results.append({
+            "question": question,
+            "model_output": output,
+            "reasoning": reasoning,
+            "answer": answer
+        })
+        
+        # Log to the model logger
+        log_model_output(
+            question=question,
+            model_output=output,
+            reasoning=reasoning,
+            answer=answer
+        )
     
-    print("\nTesting complete!")
+    logger.info("\nTesting complete!")
+    return test_results
 
 # Main execution
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Train the model
-    trainer, processor = train_model()
-    
-    # Test the model
-    test_model(trainer.model, processor)
-    
-    print("\nTraining and testing completed successfully!") 
+    try:
+        # Train the model
+        trainer, processor = train_model()
+        
+        # Test the model
+        test_model(trainer.model, processor)
+        
+        logger.info("\nTraining and testing completed successfully!")
+    except Exception as e:
+        logger.exception(f"Error during training: {str(e)}")
+        raise 

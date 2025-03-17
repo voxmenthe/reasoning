@@ -1,0 +1,124 @@
+# Add patterns to ignore (in addition to .gitignore)
+ignore_patterns:
+  - ".circleci/**"
+  - "node_modules/**"
+  - "helm/**"
+  - "terraform/**"
+  - ".next/**"
+  - "**/*tailwind*"
+  - "**/*eslint*"
+  - "**/*.mjs"
+  - "**/*.lock"
+  - "**/*.d.ts"
+  - "**/*.json"
+  - "**/*.txt"
+  - "**/*.csv"
+  - "yek/**"
+  - "yek.yaml"
+  - "__pycache__/**"
+  - "*.pyc"
+  - "**/__init__.py"
+  - "**/*.history"
+  - "**/*.ini"
+  - "stable_diffusion/**"
+  - "whisper/**"
+  - "musicgen/**"
+  - "encodec/**"
+  - "mnist/**"
+  - "llava/**"
+  - "gcn/**"
+  - "segment_anything/**"
+  - "speechcommands/**"
+  - "flux/**"
+  - "cvae/**"
+  - "cifar/**"
+  - "clip/**"
+
+# Configure Git-based priority boost (optional)
+git_boost_max: 100 # Maximum score boost based on Git history (default: 100)
+
+# Define priority rules for processing order
+# Higher scores are processed first
+priority_rules:
+  - score: 90
+    pattern: "^llms/"
+  - score: 90
+    pattern: "^lora/"
+  - score: 85
+    pattern: "^transformer_lm/"
+  - score: 80
+    pattern: "^bert/"
+  - score: 80
+    pattern: "^t5/"
+
+
+# Add additional binary file extensions to ignore
+# These extend the built-in list (.jpg, .png, .exe, etc.)
+binary_extensions:
+  - ".mjs"
+  - ".config.ts"
+  - ".config.tsx"
+  - ".config.js"
+  - ".config.jsx"
+  - ".config.json"
+  - ".config.jsonc"
+  - ".ico" # ICO files
+  - ".json" # JSON files
+  - ".blend" # Blender files
+  - ".fbx" # 3D model files
+  - ".max" # 3ds Max files
+  - ".psd" # Photoshop files
+  - ".zip" # Zip files
+  - ".tar" # Tar files
+  - ".gz" # Gzip files
+  - ".bz2" # Bzip2 files
+  - ".rar" # Rar files
+  - ".7z" # 7z files
+  - ".iso" # ISO files
+  - ".dmg" # DMG files
+  - ".pkg" # PKG files
+  - ".deb" # Debian packages
+  - ".rpm" # RPM packages
+  - ".msi" # MSI packages
+  - ".exe" # Executable files
+  - ".dll" # DLL files
+  - ".whl" # Wheel files
+  - ".egg" # Egg files
+  - ".egg-info" # Egg info files
+  - ".dist-info" # Dist info files
+  - ".build-info" # Build info files
+  - ".dist-info" # Dist info files
+  - ".build-info" # Build info files
+  - ".dist-info" # Dist info files
+  - ".woff" # WOFF files
+  - ".woff2" # WOFF2 files
+  - ".ttf" # TTF files
+  - ".otf" # OTF files
+  - ".svg" # SVG files
+  - ".png" # PNG files
+  - ".jpg" # JPG files
+  - ".jpeg" # JPEG files
+  - ".gif" # GIF files
+  - ".webp" # WebP files
+  - ".ico" # ICO files
+  - ".bmp" # BMP files
+  - ".tiff" # TIFF files
+  - ".ico" # ICO files
+  - ".mp4" # MP4 files
+  - ".mov" # MOV files
+  - ".avi" # AVI files
+  - ".mkv" # MKV files
+  - ".webm" # WebM files
+  - ".mp3" # MP3 files
+  - ".wav" # WAV files
+
+# Define output directory
+output_dir: ./yek/
+
+# Define FILE_PATH and FILE_CONTENT
+FILE_PATH: "{{{FILE_PATH}}}"
+FILE_CONTENT: "{{{FILE_CONTENT}}}"
+
+# Define output template.
+# FILE_PATH and FILE_CONTENT are expected to be present in the template.
+output_template: "{{{FILE_PATH}}}\n\nFILE_CONTENT"

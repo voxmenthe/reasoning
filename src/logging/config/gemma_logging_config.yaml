@@ -1,0 +1,138 @@
+version: 1
+disable_existing_loggers: false
+
+root:
+  level: INFO
+  handlers: [console]
+
+loggers:
+  logging.training:
+    level: INFO
+    handlers: [console, file, tensorboard]
+    propagate: false
+  
+  logging.model:
+    level: INFO
+    handlers: [console, file, csv, tensorboard]
+    propagate: false
+    
+  logging.reward:
+    level: INFO
+    handlers: [file, tensorboard]
+    propagate: false
+    
+  logging.system:
+    level: INFO
+    handlers: [file]
+    propagate: false
+    
+  logging.metrics:
+    level: INFO
+    handlers: [file, tensorboard]
+    propagate: false
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: standard
+    level: INFO
+    
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: standard
+    filename: logs/gemma_training.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    
+  csv:
+    class: logging.custom.CSVHandler
+    filename: logs/gemma_outputs.csv
+    columns: [timestamp, question, answer, llm_reasoning, llm_answer]
+    buffer_size: 100
+    flush_interval: 5.0
+    
+  tensorboard:
+    class: logging.custom.TensorBoardHandler
+    log_dir: logs/gemma_tensorboard
+    flush_secs: 30
+    max_queue: 100
+
+formatters:
+  standard:
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+    
+  json:
+    format: json
+    fields: [timestamp, level, name, message]
+
+# Model evaluation metrics configuration
+metrics:
+  # How frequently to log metrics (in training steps)
+  logging_frequency: 5
+  
+  # How frequently to run validation (in training steps)
+  validation_frequency: 250
+  
+  # Sample a subset of batches for more expensive metrics
+  sampling_ratio: 0.1
+  
+  # Enable/disable specific metric categories
+  enable:
+    reward_metrics: true
+    generation_metrics: true
+    validation_metrics: true
+    resource_metrics: true
+    
+  # Validation dataset settings for Gemma
+  validation:
+    dataset_path: "data/gsm8k_validation.json"
+    max_samples: 100
+    timeout_per_sample: 5  # seconds
+    
+  # Gemma-specific reward metrics tracking
+  reward_metrics:
+    # List of reward functions to explicitly track
+    functions:
+      - correctness_reward_func
+      - anti_repetition_reward_func
+      - soft_format_reward_func
+      - strict_format_reward_func
+      - int_reward_func
+      - xmlcount_reward_func
+      - topic_relevance_reward_func
+    
+    # Moving average window size
+    history_window: 100
+    
+    # Correlation analysis between different rewards
+    compute_correlations: true
+    
+  # Generation quality metrics
+  generation_metrics:
+    # Track token-level statistics
+    token_entropy: true
+    
+    # Track XML format statistics
+    format_adherence: true
+    
+    # Track reasoning quality
+    reasoning_to_answer_ratio: true
+    
+    # Track generation length
+    length_statistics: true
+    
+  # Resource monitoring
+  resource_metrics:
+    # Memory tracking frequency (in seconds)
+    memory_check_interval: 30
+    
+    # Track CPU usage
+    track_cpu: true
+    
+    # Track GPU/MPS usage (when available)
+    track_gpu: true
+    
+    # Log gradients and parameter statistics
+    log_parameter_stats: true
+    parameter_stats_frequency: 20  # steps 

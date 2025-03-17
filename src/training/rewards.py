@@ -13,7 +13,7 @@ from datetime import datetime
 
 nltk.download('punkt_tab')
 
-from reward_config import (
+from src.training.reward_config import (
     CORRECTNESS_REWARD,
     INTEGER_REWARD,
     STRICT_FORMAT_REWARD,
@@ -27,6 +27,7 @@ from reward_config import (
     ANTI_REPETITION_SCALE,
     MAX_ANTI_REPETITION_PENALTY
 )
+
 
 # Configure logging for whitelist matches
 WHITELIST_LOG_DIR = os.environ.get('WHITELIST_LOG_DIR', 'logs')
@@ -79,31 +80,70 @@ Alternative Approaches to Fix Repetition Penalties:
 
 def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
     """Rewards the model when its answer matches the correct answer"""
-    responses = [completion[0]['content'] for completion in completions]
-    q = prompts[0][-1]['content']
+    # Handle different completion formats
+    if completions and isinstance(completions[0], str):
+        responses = completions
+    else:
+        try:
+            responses = [completion[0]['content'] for completion in completions]
+        except (TypeError, IndexError, KeyError):
+            responses = completions
+    
+    # Handle different prompt formats
+    if prompts and isinstance(prompts[0], str):
+        q = prompts[0]  # If prompt is a string, use it directly
+    else:
+        try:
+            q = prompts[0][-1]['content']  # Original format
+        except (TypeError, IndexError, KeyError):
+            q = prompts[0]  # Fallback to using the prompt directly
+            
     extracted_responses = [extract_xml_answer(r) for r in responses]
     print('-'*20, f"Question:\n{q}", f"\nAnswer:\n{answer[0]}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
     return [CORRECTNESS_REWARD if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
 
 def int_reward_func(completions, **kwargs) -> list[float]:
     """Rewards the model for providing a numeric answer"""
-    responses = [completion[0]['content'] for completion in completions]
+    # Handle different completion formats
+    if completions and isinstance(completions[0], str):
+        responses = completions
+    else:
+        try:
+            responses = [completion[0]['content'] for completion in completions]
+        except (TypeError, IndexError, KeyError):
+            responses = completions
+            
     extracted_responses = [extract_xml_answer(r) for r in responses]
     return [INTEGER_REWARD if r.isdigit() else 0.0 for r in extracted_responses]
 
 def strict_format_reward_func(completions, **kwargs) -> list[float]:
-    """Reward function that checks if the completion has a specific format with exact newlines."""
-    pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
-    responses = [completion[0]["content"] for completion in completions]
-    matches = [re.match(pattern, r, re.DOTALL) for r in responses]
-    return [STRICT_FORMAT_REWARD if match else 0.0 for match in matches]
+    """Rewards completions that follow the strict XML format with both reasoning and answer tags"""
+    # Handle different completion formats
+    if completions and isinstance(completions[0], str):
+        responses = completions
+    else:
+        try:
+            responses = [completion[0]["content"] for completion in completions]
+        except (TypeError, IndexError, KeyError):
+            responses = completions
+    
+    return [1.0 if ("<reasoning>" in r and "</reasoning>" in r and 
+                    "<answer>" in r and "</answer>" in r) else 0.0 
+            for r in responses]
 
 def soft_format_reward_func(completions, **kwargs) -> list[float]:
-    """Reward function that checks if the completion has XML tags in any format."""
-    pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
-    responses = [completion[0]["content"] for completion in completions]
-    matches = [re.search(pattern, r, re.DOTALL) for r in responses]
-    return [SOFT_FORMAT_REWARD if match else 0.0 for match in matches]
+    """Rewards completions that have at least one XML tag pair (reasoning or answer)"""
+    # Handle different completion formats
+    if completions and isinstance(completions[0], str):
+        responses = completions
+    else:
+        try:
+            responses = [completion[0]["content"] for completion in completions]
+        except (TypeError, IndexError, KeyError):
+            responses = completions
+    
+    return [0.5 if ("<reasoning>" in r and "</reasoning>" in r) else 0.0 
+            for r in responses]
 
 def count_xml(text) -> float:
     """Counts XML tags and penalizes content after closing tags"""
@@ -122,7 +162,18 @@ def count_xml(text) -> float:
 
 def xmlcount_reward_func(completions, **kwargs) -> list[float]:
     """Rewards proper XML tag usage and penalizes extra content after closing tags"""
-    contents = [completion[0]["content"] for completion in completions]
+    # Check if completions is a list of strings or a list of dictionaries
+    if completions and isinstance(completions[0], str):
+        contents = completions
+    else:
+        # Handle the case where completions might be in a different format
+        # This tries to handle both formats to maintain backward compatibility
+        try:
+            contents = [completion[0]["content"] for completion in completions]
+        except (TypeError, IndexError, KeyError):
+            # If we can't extract content using the original approach, assume completions are already strings
+            contents = completions
+    
     return [count_xml(c) for c in contents]
 
 def find_repeated_words(text: str) -> list[tuple[str, int]]:
@@ -317,9 +368,16 @@ def find_non_latin_repeats(text: str) -> list[tuple[str, int]]:
         return []
 
 def anti_repetition_reward_func(completions, **kwargs) -> list[float]:
-    """Penalizes nonsensical repetitive patterns regardless of the script/language used."""
-    contents = [completion[0]["content"] for completion in completions]
-    
+    """Penalizes repetitive text patterns in completions"""
+    # Handle different completion formats
+    if completions and isinstance(completions[0], str):
+        contents = completions
+    else:
+        try:
+            contents = [completion[0]["content"] for completion in completions]
+        except (TypeError, IndexError, KeyError):
+            contents = completions
+            
     rewards = []
     for i, text in enumerate(contents):
         reward = 0.0
@@ -455,10 +513,27 @@ def topic_relevance_reward_func(prompts, completions, **kwargs) -> list[float]:
     """Rewards responses that stay on topic and penalizes off-topic content, excessive length,
     and content after the answer that isn't part of the reasoning."""
     
+    # Handle different completion formats
+    if completions and isinstance(completions[0], str):
+        completion_texts = completions
+    else:
+        try:
+            completion_texts = [c[0]['content'] for c in completions]
+        except (TypeError, IndexError, KeyError):
+            completion_texts = completions
+    
     rewards = []
-    for prompt, completion in zip(prompts, [c[0]['content'] for c in completions]):
+    for i, completion in enumerate(completion_texts):
         reward = 0.0
-        question = prompt[-1]['content']  # Get the actual question
+        
+        # Handle different prompt formats
+        if prompts and isinstance(prompts[0], str):
+            question = prompts[i] if i < len(prompts) else prompts[0]  # Use the prompt directly
+        else:
+            try:
+                question = prompts[i][-1]['content'] if i < len(prompts) else prompts[0][-1]['content']
+            except (TypeError, IndexError, KeyError):
+                question = prompts[i] if i < len(prompts) else prompts[0]
         
         # Extract sections
         reasoning, answer, post_answer = extract_sections(completion)
