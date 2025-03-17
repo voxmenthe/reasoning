@@ -53,3 +53,4 @@ logs/
 optimized_gemma3_gemma-3-1b-it/
 dataset_cache/
 checkpoints/
+optimized_gemma3_gemma-3-4b-it/

@@ -99,7 +99,7 @@ torch_dtype = torch.bfloat16
 
 # Constants and configuration
 # --------------------------------------------------------------------------
-MODEL_NAME = "google/gemma-3-1b-it" # "google/gemma-3-4b-it"  # 
+MODEL_NAME = "google/gemma-3-4b-it"  # "google/gemma-3-1b-it" # 
 DATASET_CACHE_PATH = "./dataset_cache"
 CHECKPOINT_DIR = "./checkpoints"
 TENSORBOARD_DIR = "./logs/gemma_tensorboard"  # Updated to match logging config
