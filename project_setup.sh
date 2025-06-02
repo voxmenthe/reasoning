@@ -2,13 +2,13 @@
 set -e  # Exit immediately if a command exits with a non-zero status
 
 # Create the virtual environment if it doesn't exist
-if [ ! -d ~/venvs/gemma3 ]; then
-    echo "Creating virtual environment at ~/venvs/gemma3"
-    python -m venv ~/venvs/gemma3
+if [ ! -d ~/venvs/rlvr ]; then
+    echo "Creating virtual environment at ~/venvs/rlvr"
+    python -m venv ~/venvs/rlvr
 fi
 
-# Activate the gemma3 virtual environment
-source ~/venvs/gemma3/bin/activate
+# Activate the rlvr virtual environment
+source ~/venvs/rlvr/bin/activate
 
 # Upgrade pip and install poetry
 pip install --upgrade pip
@@ -24,9 +24,9 @@ poetry lock
 poetry install
 
 # Create and install the IPython kernel for the project
-python -m ipykernel install --user --name=gemma3 --display-name "Gemma3"
+python -m ipykernel install --user --name=rlvr --display-name "RLVR"
 
-echo "Jupyter kernel 'gemma3' has been installed."
+echo "Jupyter kernel 'rlvr' has been installed."
 
 # Run the tests to verify everything is working
 echo "Running tests to verify setup..."
